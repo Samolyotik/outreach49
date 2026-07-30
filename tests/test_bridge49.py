@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, dispatcher, entities, planner  # noqa: E402
+from bridge49 import catalog, dispatcher, entities, planner, pollers  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
@@ -297,6 +297,110 @@ class DispatchGateTests(unittest.TestCase):
         )
         self.assertEqual(result["would_dispatch"], 0)
         self.assertIn("allow_immediate", result["blocked"][0]["why"])
+
+
+class FakeBridge:
+    """Заглушка моста: отдаёт заранее заданные строки, никуда не ходит."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __call__(self, dsn, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def inbound(self, after_id, limit):
+        return [r for r in self.rows if int(r["id"]) > int(after_id)][:limit]
+
+
+def inbound_record(notification_id: int, *, job: str, conversation: str) -> dict:
+    return {
+        "id": notification_id,
+        "account_id": 821,
+        "created_at": "2026-07-30T12:00:00+00:00",
+        "details": {
+            "schema": "tgr.outreach.inbound",
+            "version": 1,
+            "surface": "private_dm",
+            "peer": {"type": "user", "tg_id": 555, "username": "someone"},
+            "message": {
+                "tg_message_id": 9, "sender_tg_id": 555,
+                "date": "2026-07-30T12:00:00+00:00", "text": "интересно",
+            },
+            "correlation": {
+                "external_job_id": job,
+                "external_conversation_id": conversation,
+            },
+        },
+    }
+
+
+class InboundPollTests(unittest.TestCase):
+    """Фид виден целиком по бизнесу, включая команды чужого продюсера."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _poll(self, rows):
+        original = pollers.RadarBridge
+        pollers.RadarBridge = FakeBridge(rows)
+        try:
+            return asyncio.run(pollers.poll_inbound(self.store, self.settings))
+        finally:
+            pollers.RadarBridge = original
+
+    def test_foreign_correlation_ids_do_not_break_the_feed(self):
+        result = self._poll([
+            inbound_record(1001, job="их-кампания", conversation="их-лид")
+        ])
+        self.assertEqual(result["stored"], 1)
+        self.assertEqual(result["link_failed"], 0)
+        self.assertEqual(result["cursor"], 1001)
+        thread = self.store.one("SELECT * FROM threads")
+        self.assertIsNone(thread["campaign_id"])
+        self.assertIsNone(thread["contact_id"])
+
+    def test_our_own_correlation_ids_are_linked(self):
+        contact = entities.add_contact(self.store, username="someone",
+                                       segment="s")
+        entities.add_campaign(self.store, name="c", action="command_dry_run",
+                              segment="s", campaign_id="cmp_ours")
+        result = self._poll([
+            inbound_record(1002, job="cmp_ours", conversation=contact["id"])
+        ])
+        self.assertEqual(result["stored"], 1)
+        thread = self.store.one("SELECT * FROM threads")
+        self.assertEqual(thread["campaign_id"], "cmp_ours")
+        self.assertEqual(thread["contact_id"], contact["id"])
+        self.assertEqual(thread["state"], "handoff")
+        self.assertEqual(
+            self.store.one("SELECT status FROM contacts WHERE id = ?",
+                           (contact["id"],))["status"],
+            "replied",
+        )
+
+    def test_cursor_prevents_reprocessing(self):
+        rows = [inbound_record(1003, job="x", conversation="y")]
+        self.assertEqual(self._poll(rows)["stored"], 1)
+        self.assertEqual(self._poll(rows)["fetched"], 0)
+
+    def test_one_handoff_per_thread(self):
+        self._poll([
+            inbound_record(1004, job="x", conversation="y"),
+            inbound_record(1005, job="x", conversation="y"),
+        ])
+        count = self.store.one("SELECT count(*) AS n FROM handoffs")["n"]
+        self.assertEqual(count, 1)
 
 
 class AccountRegistryTests(unittest.TestCase):

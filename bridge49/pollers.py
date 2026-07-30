@@ -165,7 +165,7 @@ async def poll_inbound(
     async with RadarBridge(settings.dsn) as bridge:
         rows = await bridge.inbound(cursor, limit)
 
-    stored = replies = 0
+    stored = replies = failures = 0
     for record in rows:
         details = record.get("details") or {}
         if isinstance(details, str):
@@ -182,11 +182,19 @@ async def poll_inbound(
             else f"id:{int(peer.get('tg_id') or 0)}"
         )
 
+        # Корреляционные ID приходят из конверта команды и могут принадлежать
+        # чужому продюсеру — в фиде видны все команды бизнеса, не только наши.
+        # Поэтому оба ID принимаем, только если такие записи есть у нас.
         contact_id = correlation.get("external_conversation_id")
         if contact_id and not store.one(
             "SELECT id FROM contacts WHERE id = ?", (contact_id,)
         ):
             contact_id = None
+        campaign_id = correlation.get("external_job_id")
+        if campaign_id and not store.one(
+            "SELECT id FROM campaigns WHERE id = ?", (campaign_id,)
+        ):
+            campaign_id = None
         if contact_id is None and peer_username:
             match = store.one(
                 "SELECT id FROM contacts WHERE lower(username) = lower(?)",
@@ -209,31 +217,41 @@ async def poll_inbound(
         )
         stored += 1
 
-        thread_id = _upsert_thread(
-            store, account_id=account_id, peer_key=peer_key,
-            contact_id=contact_id,
-            campaign_id=correlation.get("external_job_id"),
-            surface=surface, inbound_at=message.get("date") or now(),
-        )
-
-        if contact_id:
-            store.execute(
-                "UPDATE contacts SET status = 'replied', updated_at = ? "
-                "WHERE id = ? AND status IN ('new', 'contacted')",
-                (now(), contact_id),
+        # Само сообщение уже сохранено выше. Всё, что идёт дальше, — это
+        # связывание с диалогом и контактом; если оно почему-то не удалось,
+        # входящее не теряем и курсор всё равно двигаем, иначе один кривой
+        # конверт остановил бы весь фид.
+        try:
+            thread_id = _upsert_thread(
+                store, account_id=account_id, peer_key=peer_key,
+                contact_id=contact_id, campaign_id=campaign_id,
+                surface=surface, inbound_at=message.get("date") or now(),
             )
-        if surface in HANDOFF_SURFACES:
-            replies += _ensure_handoff(store, thread_id, message.get("text") or "")
+            if contact_id:
+                store.execute(
+                    "UPDATE contacts SET status = 'replied', updated_at = ? "
+                    "WHERE id = ? AND status IN ('new', 'contacted')",
+                    (now(), contact_id),
+                )
+            if surface in HANDOFF_SURFACES:
+                replies += _ensure_handoff(
+                    store, thread_id, message.get("text") or ""
+                )
+        except Exception as exc:  # noqa: BLE001 — фид важнее связывания
+            failures += 1
+            store.log(actor, "poll.inbound.link_failed", str(record["id"]),
+                      str(exc)[:300])
 
         cursor = max(cursor, int(record["id"]))
 
     store.set_state(INBOUND_CURSOR, str(cursor))
     store.log(actor, "poll.inbound", "",
-              f"fetched={len(rows)} stored={stored} handoffs={replies} cursor={cursor}")
+              f"fetched={len(rows)} stored={stored} handoffs={replies} "
+              f"link_failed={failures} cursor={cursor}")
     store.commit()
     return {
         "fetched": len(rows), "stored": stored, "handoffs": replies,
-        "cursor": cursor,
+        "link_failed": failures, "cursor": cursor,
     }
 
 
