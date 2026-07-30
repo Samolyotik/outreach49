@@ -61,10 +61,17 @@ def add_contact(
     if username and not _USERNAME_RE.match(username):
         raise ValueError(f"непохоже на telegram username: {username!r}")
 
+    # Дедуплицируем и по username, и по tg_id: контакт без username иначе
+    # заводился бы заново при каждом импорте, а планировщик разложил бы дубли
+    # по разным аккаунтам — человек получил бы два письма от двух незнакомцев.
     existing = None
     if username:
         existing = store.one(
             "SELECT * FROM contacts WHERE lower(username) = lower(?)", (username,)
+        )
+    if existing is None and tg_id is not None:
+        existing = store.one(
+            "SELECT * FROM contacts WHERE tg_id = ?", (int(tg_id),)
         )
 
     payload = (
@@ -92,6 +99,30 @@ def add_contact(
     return dict(store.one("SELECT * FROM contacts WHERE id = ?", (contact_id,)))
 
 
+def _flatten(value) -> str:
+    """Значение ячейки CSV → строка. Хвост строки приходит списком."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item).strip() for item in value if item).strip()
+    return (str(value) if value is not None else "").strip()
+
+
+def _find_existing(store: Store, row: dict) -> object | None:
+    """Есть ли уже такой контакт — по username либо по tg_id."""
+    username = normalize_username(row.get("username"))
+    if username:
+        return store.one(
+            "SELECT id FROM contacts WHERE lower(username) = lower(?)", (username,)
+        )
+    if row.get("tg_id"):
+        try:
+            return store.one(
+                "SELECT id FROM contacts WHERE tg_id = ?", (int(row["tg_id"]),)
+            )
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def import_csv(store: Store, path: Path | str, *, actor: str = "cli") -> dict:
     """Импорт CSV. Колонки: username, tg_id, name, company, segment, tags, ...
 
@@ -105,13 +136,18 @@ def import_csv(store: Store, path: Path | str, *, actor: str = "cli") -> dict:
     errors: list[str] = []
 
     with Path(path).open(encoding="utf-8-sig", newline="") as handle:
-        for line_no, row in enumerate(csv.DictReader(handle), start=2):
-            row = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
+        # restkey обязателен: без него лишние поля строки (незакавыченная или
+        # хвостовая запятая) попадают под ключ None списком, и нормализация
+        # падает с AttributeError посреди импорта.
+        reader = csv.DictReader(handle, restkey="_extra")
+        for line_no, raw_row in enumerate(reader, start=2):
+            row = {
+                (key or "").strip(): _flatten(value)
+                for key, value in raw_row.items()
+            }
+            row.pop("_extra", None)
             extra = {k: v for k, v in row.items() if k and k not in known and v}
-            before = store.one(
-                "SELECT id FROM contacts WHERE lower(username) = lower(?)",
-                (normalize_username(row.get("username")) or "",),
-            )
+            before = _find_existing(store, row)
             try:
                 add_contact(
                     store,
@@ -127,7 +163,7 @@ def import_csv(store: Store, path: Path | str, *, actor: str = "cli") -> dict:
                     note=row.get("note") or None,
                     actor=actor,
                 )
-            except ValueError as exc:
+            except (ValueError, TypeError) as exc:
                 failed += 1
                 if len(errors) < 10:
                     errors.append(f"строка {line_no}: {exc}")

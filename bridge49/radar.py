@@ -94,6 +94,34 @@ class QueueFull(BridgeError):
     """Активная очередь заполнена — нужен drain, а не новые UUID."""
 
 
+class BridgeRejected(BridgeError):
+    """Команда точно НЕ создана: мост разобрал её и отказал детерминированно.
+
+    Только такую ошибку можно считать окончательной. Повтор с тем же телом
+    даст тот же отказ, поэтому задачу можно закрывать.
+    """
+
+
+class BridgeUnknown(BridgeError):
+    """Неизвестно, создалась ли команда: связь оборвалась или истёк таймаут.
+
+    Функция моста — ``SECURITY DEFINER`` и коммитит сама, поэтому обрыв уже
+    ПОСЛЕ коммита выглядит с нашей стороны точно так же, как обрыв до него.
+    Такую задачу нельзя ни закрывать, ни переигрывать новым UUID: её нужно
+    оставить и повторить тем же UUID, который контракт делает идемпотентным.
+    """
+
+
+#: Классы SQLSTATE, при которых команда гарантированно не создана: мост
+#: успел разобрать запрос и осознанно отказал.
+_DETERMINISTIC_SQLSTATE_PREFIXES = (
+    "P0",  # raise_exception — это собственные проверки функции моста
+    "22",  # data exception
+    "23",  # integrity constraint violation
+    "42",  # syntax error / undefined object
+)
+
+
 def new_request_id() -> str:
     return str(uuid.uuid4())
 
@@ -210,16 +238,28 @@ class RadarBridge:
                     )
                 return int(row["command_id"])
             except asyncpg.PostgresError as exc:
-                code = getattr(exc, "sqlstate", None)
+                code = str(getattr(exc, "sqlstate", "") or "")
                 if code == SQLSTATE_LIMIT:
+                    # Очередь полна: до вставки дело не дошло.
                     raise QueueFull(str(exc)) from exc
-                if code != SQLSTATE_LOCK_NOT_AVAILABLE:
-                    raise BridgeError(f"enqueue отклонён: {exc}") from exc
-                last_error = exc
-                # Узкий advisory lock: конкуренция короткая, ждём с джиттером.
-                await asyncio.sleep(0.2 * (2**attempt) + random.random() * 0.3)
+                if code == SQLSTATE_LOCK_NOT_AVAILABLE:
+                    last_error = exc
+                    # Узкий advisory lock: конкуренция короткая, ждём с джиттером.
+                    await asyncio.sleep(0.2 * (2**attempt) + random.random() * 0.3)
+                    continue
+                if code.startswith(_DETERMINISTIC_SQLSTATE_PREFIXES):
+                    raise BridgeRejected(f"мост отклонил команду: {exc}") from exc
+                # Обрыв связи, таймаут, перезапуск PgBouncer, admin shutdown —
+                # всё это могло случиться уже ПОСЛЕ коммита функции.
+                raise BridgeUnknown(
+                    f"результат enqueue неизвестен (SQLSTATE {code or '—'}): {exc}"
+                ) from exc
+            except (OSError, asyncio.TimeoutError, asyncpg.InterfaceError) as exc:
+                raise BridgeUnknown(f"результат enqueue неизвестен: {exc}") from exc
 
-        raise BridgeError(f"enqueue не прошёл за {attempts} попыток: {last_error}")
+        raise BridgeUnknown(
+            f"enqueue не прошёл за {attempts} попыток из-за конкуренции: {last_error}"
+        )
 
     async def enqueue_with_attachment(
         self,

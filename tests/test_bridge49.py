@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, dispatcher, entities, planner, pollers  # noqa: E402
+from bridge49 import catalog, dispatcher, entities, planner, pollers, radar  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
@@ -285,6 +285,31 @@ class DispatchGateTests(unittest.TestCase):
         )
         self.assertEqual(result["would_dispatch"], 0)
 
+    def test_orphaned_task_still_obeys_campaign_status(self):
+        # UUID пишется до обращения к Radar, поэтому оборванная задача могла
+        # ещё не уехать вовсе — пауза кампании обязана её удержать.
+        self.store.execute(
+            "UPDATE tasks SET request_id = 'уже-выдан' WHERE campaign_id = 'cx'"
+        )
+        self.store.commit()
+        entities.set_campaign_status(self.store, "cx", "paused")
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 0)
+        self.assertEqual(len(result["blocked"]), 1)
+        self.assertIn("paused", result["blocked"][0]["why"])
+
+    def test_orphaned_task_is_replayed_with_the_same_uuid(self):
+        self.store.execute(
+            "UPDATE tasks SET request_id = 'уже-выдан' WHERE campaign_id = 'cx'"
+        )
+        self.store.commit()
+        pending = dispatcher.orphaned(self.store)
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["request_id"], "уже-выдан")
+        self.assertEqual(pending[0]["campaign_status"], "active")
+
     def test_immediate_visible_requires_account_flag(self):
         # 803 не имеет allow_immediate_visible_actions.
         self.store.execute(
@@ -401,6 +426,312 @@ class InboundPollTests(unittest.TestCase):
         ])
         count = self.store.one("SELECT count(*) AS n FROM handoffs")["n"]
         self.assertEqual(count, 1)
+
+
+class FakeEnqueueBridge:
+    """Заглушка записи: считает вызовы и умеет падать заданной ошибкой."""
+
+    def __init__(self, error=None):
+        self.error = error
+        self.calls = []
+        self.next_id = 1000
+
+    def __call__(self, dsn, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def enqueue(self, account_id, request, available_at=None, **kwargs):
+        self.calls.append((account_id, request))
+        if self.error is not None:
+            raise self.error
+        self.next_id += 1
+        return self.next_id
+
+
+def run_dispatch(store, settings, bridge, **kwargs):
+    original = dispatcher.RadarBridge
+    dispatcher.RadarBridge = bridge
+    try:
+        return asyncio.run(dispatcher.dispatch(store, settings, **kwargs))
+    finally:
+        dispatcher.RadarBridge = original
+
+
+class DailyCapTests(unittest.TestCase):
+    """Лимит обязан держать и ВНУТРИ одного прогона, а не только между ними."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        self.settings.limits.per_account_daily_visible = 3
+        self.settings.limits.dispatch_batch = 25
+        # Окно отправки не должно мешать тесту.
+        self.settings.limits.send_window_start_hour = 0
+        self.settings.limits.send_window_end_hour = 24
+        self.settings.limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        entities.add_template(self.store, "t", "Привет, {name}!", template_id="t1")
+        entities.add_campaign(
+            self.store, name="c", action="send_private_dm", template_id="t1",
+            segment="s", campaign_id="cap", per_account_daily_cap=99,
+            daily_cap=99,
+        )
+        entities.set_campaign_status(self.store, "cap", "active")
+        for i in range(10):
+            entities.add_contact(self.store, username=f"lead_cap{i}",
+                                 display_name=f"Имя{i}", segment="s")
+        planner.plan(self.store, "cap", limits=self.settings.limits,
+                     dry_run=False)
+        # Все задачи созрели и все на единственном dm_sender.
+        self.store.execute(
+            "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00', "
+            "account_id = 821"
+        )
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_cap_holds_within_a_single_run(self):
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 3)
+        self.assertEqual(len(bridge.calls), 3)
+        self.assertTrue(
+            any("лимит 3" in b["why"] for b in result["blocked"]),
+            result["blocked"],
+        )
+
+    def test_preview_shows_the_same_number(self):
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 3)
+
+    def test_read_actions_do_not_spend_the_visible_budget(self):
+        self.store.execute(
+            "UPDATE tasks SET action='command_dry_run', params='{}', "
+            "dispatched_at=strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), state='done'"
+        )
+        self.store.commit()
+        self.assertEqual(dispatcher.visible_sent_today(self.store, 821), 0)
+
+
+class SendWindowAtDispatchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        entities.add_template(self.store, "t", "Привет!", template_id="t1")
+        entities.add_campaign(
+            self.store, name="c", action="send_private_dm", template_id="t1",
+            segment="s", campaign_id="win",
+        )
+        entities.set_campaign_status(self.store, "win", "active")
+        entities.add_contact(self.store, username="lead_win", segment="s")
+        planner.plan(self.store, "win", limits=self.settings.limits, dry_run=False)
+        self.store.execute(
+            "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00', "
+            "account_id = 821"
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_outside_the_window_a_visible_task_is_held(self):
+        # Окно, в которое текущий момент заведомо не попадает.
+        self.settings.limits.send_weekdays = ()
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 0)
+        self.assertIn("вне окна", result["blocked"][0]["why"])
+
+    def test_inside_the_window_it_goes(self):
+        self.settings.limits.send_window_start_hour = 0
+        self.settings.limits.send_window_end_hour = 24
+        self.settings.limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 1)
+
+
+class EnqueueFailureTests(unittest.TestCase):
+    """Неизвестный исход нельзя закрывать: команда могла уже уехать."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        entities.add_campaign(
+            self.store, name="c", action="command_dry_run", segment="s",
+            campaign_id="err",
+        )
+        entities.set_campaign_status(self.store, "err", "active")
+        entities.add_contact(self.store, username="lead_err", segment="s")
+        planner.plan(self.store, "err", limits=self.settings.limits, dry_run=False)
+        self.store.execute(
+            "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00'"
+        )
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _task(self):
+        return dict(self.store.one("SELECT * FROM tasks"))
+
+    def test_unknown_outcome_keeps_the_task_planned_with_its_uuid(self):
+        bridge = FakeEnqueueBridge(radar.BridgeUnknown("связь оборвалась"))
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(len(result["deferred"]), 1)
+        task = self._task()
+        self.assertEqual(task["state"], "planned")
+        self.assertIsNotNone(task["request_id"])
+
+    def test_the_same_uuid_is_replayed_next_run(self):
+        first = FakeEnqueueBridge(radar.BridgeUnknown("связь оборвалась"))
+        run_dispatch(self.store, self.settings, first, confirm=True)
+        uuid_used = first.calls[0][1]["request_id"]
+
+        second = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, second, confirm=True)
+        self.assertEqual(result["dispatched"], 1)
+        self.assertEqual(second.calls[0][1]["request_id"], uuid_used)
+
+    def test_deterministic_rejection_is_terminal(self):
+        bridge = FakeEnqueueBridge(radar.BridgeRejected("роль не позволяет"))
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(self._task()["state"], "blocked")
+
+    def test_blocked_can_be_returned_to_the_plan(self):
+        run_dispatch(self.store, self.settings,
+                     FakeEnqueueBridge(radar.BridgeRejected("нет")), confirm=True)
+        self.assertEqual(dispatcher.unblock(self.store, [self._task()["id"]]), 1)
+        self.assertEqual(self._task()["state"], "planned")
+
+    def test_claim_is_atomic(self):
+        task = self._task()
+        first = dispatcher._claim(self.store, task)
+        # Второй процесс видит ту же строку в старом снимке, без request_id.
+        stale = dict(task)
+        stale["request_id"] = None
+        second = dispatcher._claim(self.store, stale)
+        self.assertEqual(first, second)
+
+
+class ReplanAccountingTests(unittest.TestCase):
+    """Повторный plan не должен выдавать аккаунту лимит заново."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        entities.add_template(self.store, "t", "Привет!", template_id="t1")
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _campaign(self, name, cap=2):
+        entities.add_campaign(
+            self.store, name=name, action="send_private_dm", template_id="t1",
+            segment="s", campaign_id=name, per_account_daily_cap=cap,
+            daily_cap=99,
+        )
+        return name
+
+    def test_second_campaign_does_not_reset_the_daily_load(self):
+        for i in range(8):
+            entities.add_contact(self.store, username=f"lead_rp{i}", segment="s")
+        planner.plan(self.store, self._campaign("one"),
+                     limits=self.settings.limits, dry_run=False)
+        planner.plan(self.store, self._campaign("two"),
+                     limits=self.settings.limits, dry_run=False)
+
+        rows = self.store.query(
+            "SELECT account_id, substr(scheduled_at, 1, 10) AS day, count(*) AS n "
+            "FROM tasks GROUP BY account_id, day"
+        )
+        for row in rows:
+            self.assertLessEqual(
+                row["n"], 2,
+                f"аккаунт {row['account_id']} получил {row['n']} задач на {row['day']}",
+            )
+
+    def test_slots_never_collide(self):
+        for i in range(12):
+            entities.add_contact(self.store, username=f"lead_col{i}", segment="s")
+        planner.plan(self.store, self._campaign("a", cap=3),
+                     limits=self.settings.limits, dry_run=False)
+        planner.plan(self.store, self._campaign("b", cap=3),
+                     limits=self.settings.limits, dry_run=False)
+        rows = self.store.query(
+            "SELECT account_id, scheduled_at, count(*) AS n FROM tasks "
+            "GROUP BY account_id, scheduled_at HAVING n > 1"
+        )
+        self.assertEqual([dict(r) for r in rows], [])
+
+    def test_completed_tasks_still_count(self):
+        for i in range(4):
+            entities.add_contact(self.store, username=f"lead_done{i}", segment="s")
+        planner.plan(self.store, self._campaign("x", cap=2),
+                     limits=self.settings.limits, dry_run=False)
+        self.store.execute("UPDATE tasks SET state = 'done'")
+        self.store.commit()
+        planner.plan(self.store, self._campaign("y", cap=2),
+                     limits=self.settings.limits, dry_run=False)
+        rows = self.store.query(
+            "SELECT account_id, substr(scheduled_at, 1, 10) AS day, count(*) AS n "
+            "FROM tasks GROUP BY account_id, day"
+        )
+        for row in rows:
+            self.assertLessEqual(row["n"], 2)
+
+
+class CsvImportTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _write(self, text: str) -> Path:
+        path = Path(self.tmp.name) / "leads.csv"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_extra_columns_do_not_crash_the_import(self):
+        path = self._write(
+            "username,name,company\n"
+            "lead_ok,Иван,ООО Ромашка\n"
+            "lead_comma,Пётр,ООО Ромашка, Тверь\n"   # лишняя запятая
+            "lead_tail,Анна,ООО Астра,\n"            # хвостовая запятая
+        )
+        result = entities.import_csv(self.store, path)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["added"], 3)
+
+    def test_contacts_without_username_dedupe_by_tg_id(self):
+        path = self._write("tg_id,name\n555,Иван\n555,Иван ещё раз\n")
+        result = entities.import_csv(self.store, path)
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(
+            self.store.one("SELECT count(*) AS n FROM contacts")["n"], 1
+        )
 
 
 class AccountRegistryTests(unittest.TestCase):

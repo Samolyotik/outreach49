@@ -26,6 +26,35 @@ def _tz(name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def _place(
+    account_id: int,
+    *,
+    start: datetime,
+    cursor: dict[int, datetime],
+    used: dict[tuple[int, str], int],
+    cap: int,
+    limits: Limits,
+    tz: ZoneInfo,
+    paced: bool,
+) -> tuple[datetime, str] | tuple[None, None]:
+    """Найти ближайший слот аккаунта, не превышающий дневной лимит.
+
+    Лимит считается по дню самого слота, а не по «сегодня»: план, собранный
+    вечером, кладёт задачи на завтра, и вчерашний счётчик к ним отношения не
+    имеет. Если день уже забит — переходим к следующему.
+    """
+    slot = next_slot(max(start, cursor.get(account_id, start)), limits, tz, paced=paced)
+    for _ in range(30):  # месяц вперёд — дальше искать бессмысленно
+        day = slot.date().isoformat()
+        if used.get((account_id, day), 0) < cap:
+            return slot, day
+        tomorrow = (slot + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        slot = next_slot(tomorrow, limits, tz, paced=paced)
+    return None, None
+
+
 def next_slot(
     after: datetime, limits: Limits, tz: ZoneInfo, *, paced: bool
 ) -> datetime:
@@ -148,20 +177,26 @@ def plan(
         seconds=limits.per_account_visible_interval_sec if paced else 5
     )
 
-    # Сколько каждый аккаунт уже отработал за сегодня — учитываем, чтобы
-    # повторный plan не удваивал нагрузку.
-    today = datetime.now(timezone.utc).date().isoformat()
-    used: dict[int, int] = {}
+    # Нагрузка учитывается по дню запланированного слота и по ВСЕМ незакрытым
+    # состояниям. Считать «за сегодня» и только planned/queued нельзя: после
+    # poll задачи уходят в done и исчезли бы из счётчика, а повторный plan
+    # выдал бы аккаунту полный лимит заново, да ещё и на те же самые минуты.
+    used: dict[tuple[int, str], int] = {}
     cursor: dict[int, datetime] = {}
     for row in store.query(
-        "SELECT account_id, count(*) AS n, max(scheduled_at) AS last "
-        "FROM tasks WHERE state IN ('planned','queued') "
-        "  AND substr(scheduled_at, 1, 10) = ? GROUP BY account_id",
-        (today,),
+        "SELECT account_id, substr(scheduled_at, 1, 10) AS day, count(*) AS n "
+        "FROM tasks WHERE state NOT IN ('cancelled', 'blocked') "
+        "GROUP BY account_id, day"
     ):
-        used[int(row["account_id"])] = int(row["n"])
+        used[(int(row["account_id"]), str(row["day"]))] = int(row["n"])
+    for row in store.query(
+        "SELECT account_id, max(scheduled_at) AS last FROM tasks "
+        "WHERE state NOT IN ('cancelled', 'blocked') GROUP BY account_id"
+    ):
         if row["last"]:
-            cursor[int(row["account_id"])] = datetime.fromisoformat(row["last"])
+            cursor[int(row["account_id"])] = (
+                datetime.fromisoformat(row["last"]) + interval
+            )
 
     start = datetime.now(timezone.utc) + timedelta(minutes=1)
     planned: list[dict] = []
@@ -175,12 +210,22 @@ def plan(
             skipped.append({"contact": contact["id"], "why": "исчерпан daily_cap"})
             continue
 
-        # Выбираем наименее загруженный подходящий аккаунт.
-        ranked = sorted(pool, key=lambda a: (used.get(a["id"], 0), a["id"]))
-        account = next(
-            (a for a in ranked if used.get(a["id"], 0) < per_account_cap), None
-        )
-        if account is None:
+        # Берём аккаунт, который освободится раньше остальных и у которого в
+        # этот день ещё осталось место.
+        account: dict | None = None
+        slot: datetime | None = None
+        day: str | None = None
+        for candidate in sorted(
+            pool, key=lambda a: (cursor.get(a["id"], start), a["id"])
+        ):
+            slot, day = _place(
+                candidate["id"], start=start, cursor=cursor, used=used,
+                cap=per_account_cap, limits=limits, tz=tz, paced=paced,
+            )
+            if slot is not None:
+                account = candidate
+                break
+        if account is None or slot is None or day is None:
             skipped.append({
                 "contact": contact["id"],
                 "why": f"все аккаунты выбрали дневной лимит ({per_account_cap})",
@@ -200,10 +245,8 @@ def plan(
             skipped.append({"contact": contact["id"], "why": str(exc)})
             continue
 
-        base = max(start, cursor.get(account["id"], start))
-        slot = next_slot(base, limits, tz, paced=paced)
         cursor[account["id"]] = slot + interval
-        used[account["id"]] = used.get(account["id"], 0) + 1
+        used[(account["id"], day)] = used.get((account["id"], day), 0) + 1
         index += 1
 
         planned.append({

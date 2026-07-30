@@ -3,7 +3,8 @@
 Порядок операций выбран так, чтобы обрыв связи в любой точке не привёл к
 повторной отправке:
 
-1. UUID запроса пишется в локальную базу **до** обращения к Radar;
+1. UUID запроса пишется в локальную базу **до** обращения к Radar, причём
+   атомарно — `WHERE request_id IS NULL`;
 2. затем вызывается enqueue;
 3. затем сохраняется полученный command_id.
 
@@ -11,29 +12,71 @@
 UUID и тем же каноническим request. Контракт моста гарантирует, что такой
 повтор идемпотентен и вернёт уже существующий command_id, а не создаст вторую
 отправку. Новый UUID после таймаута — единственное, чего делать нельзя.
+
+Весь прогон дополнительно защищён файловой блокировкой: два одновременных
+`dispatch` (например, таймер и ручной запуск) иначе выдали бы одной задаче
+два разных UUID, а два UUID — это два `dedup_key` и две реальные отправки.
 """
 from __future__ import annotations
 
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import accounts as accounts_mod
 from . import catalog, report
 from .config import Settings
-from .radar import BridgeError, QueueFull, RadarBridge, build_request, new_request_id
-from .store import Store, dumps, loads, now
+from .radar import (
+    BridgeError,
+    BridgeRejected,
+    BridgeUnknown,
+    QueueFull,
+    RadarBridge,
+    build_request,
+    new_request_id,
+)
+from .store import Store, loads, now
 
-
-class NotArmed(RuntimeError):
-    """Боевой режим выключен — так и задумано."""
+#: Действия, которые собеседник видит. По ним считается дневной лимит.
+VISIBLE_ACTIONS = tuple(
+    sorted(name for name, a in catalog.ACTIONS.items() if a.visible)
+)
 
 
 class DispatchBlocked(RuntimeError):
-    """Задачу нельзя выпускать прямо сейчас."""
+    """Задачу нельзя выпускать прямо сейчас. Задача остаётся запланированной."""
+
+
+class DispatchBusy(RuntimeError):
+    """Другой процесс уже выпускает задачи."""
+
+
+@contextmanager
+def exclusive(settings: Settings):
+    """Один выпускающий процесс на установку."""
+    path = Path(settings.home) / "var" / "dispatch.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("w")
+    try:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise DispatchBusy(
+                f"другой dispatch уже работает (блокировка {path})"
+            ) from exc
+        yield
+    finally:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def due_tasks(store: Store, *, campaign_id: str | None = None,
               limit: int = 50) -> list[dict]:
-    """Задачи, которым пора: время пришло, кампания активна."""
+    """Задачи, которым пора: время пришло."""
     sql = (
         "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name "
         "FROM tasks t JOIN campaigns c ON c.id = t.campaign_id "
@@ -52,30 +95,89 @@ def due_tasks(store: Store, *, campaign_id: str | None = None,
     return rows
 
 
-def orphaned(store: Store) -> list[dict]:
-    """Задачи с UUID, но без command_id — прошлый прогон оборвался."""
-    rows = store.query(
-        "SELECT * FROM tasks WHERE state = 'planned' AND request_id IS NOT NULL "
-        "ORDER BY scheduled_at"
+def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
+    """Задачи с UUID, но без command_id — прошлый прогон оборвался.
+
+    Кампанию джойним обязательно: UUID пишется ДО обращения к Radar, поэтому
+    оборванная задача могла ещё не уехать вовсе. Без статуса кампании такая
+    задача прошла бы гейт «только active» и выпустилась из поставленной на
+    паузу кампании.
+    """
+    sql = (
+        "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name "
+        "FROM tasks t JOIN campaigns c ON c.id = t.campaign_id "
+        "WHERE t.state = 'planned' AND t.request_id IS NOT NULL "
     )
+    params: list = []
+    if campaign_id:
+        sql += "AND t.campaign_id = ? "
+        params.append(campaign_id)
+    sql += "ORDER BY t.scheduled_at"
+
     out = []
-    for row in rows:
+    for row in store.query(sql, params):
         item = dict(row)
         item["params"] = loads(item.get("params"), {})
         out.append(item)
     return out
 
 
-def preflight(store: Store, task: dict, settings: Settings) -> None:
-    """Все проверки, которые дешевле сделать до обращения к базе."""
+def visible_sent_today(store: Store, account_id: int) -> int:
+    """Сколько видимых действий аккаунт уже выпустил за сегодня.
+
+    Считаем только видимые: read и soft собеседник не наблюдает, и лимит на
+    них не распространяется — значит и бюджет они тратить не должны.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
+    row = store.one(
+        "SELECT count(*) AS n FROM tasks "
+        f"WHERE account_id = ? AND action IN ({placeholders}) "
+        "  AND substr(dispatched_at, 1, 10) = ? "
+        "  AND state NOT IN ('cancelled', 'blocked')",
+        (int(account_id), *VISIBLE_ACTIONS, today),
+    )
+    return int(row["n"])
+
+
+def inside_send_window(settings: Settings, moment: datetime | None = None) -> bool:
+    """Идёт ли сейчас окно отправки в рабочей таймзоне."""
+    limits = settings.limits
+    if not limits.send_window_start_hour and not limits.send_window_end_hour:
+        return True
+    moment = moment or datetime.now(timezone.utc)
+    try:
+        local = moment.astimezone(ZoneInfo(settings.timezone))
+    except Exception:  # noqa: BLE001 — нет tzdata: не мешаем работе
+        return True
+    if local.weekday() not in limits.send_weekdays:
+        return False
+    return limits.send_window_start_hour <= local.hour < limits.send_window_end_hour
+
+
+def preflight(
+    store: Store,
+    task: dict,
+    settings: Settings,
+    *,
+    spent: dict[int, int] | None = None,
+) -> catalog.Action:
+    """Все проверки, которые дешевле сделать до обращения к базе.
+
+    ``spent`` нужен только предпросмотру: там ничего не пишется в базу, и без
+    накопительного счётчика лимит выглядел бы замороженным. В боевом цикле
+    счётчик не передают — там после каждой отправки коммитится `dispatched_at`,
+    и запрос к базе сам по себе актуален.
+    """
     if task.get("campaign_status") not in (None, "active"):
         raise DispatchBlocked(
             f"кампания в статусе {task['campaign_status']}, нужен active"
         )
 
-    account = accounts_mod.get(store, int(task["account_id"]))
+    account_id = int(task["account_id"])
+    account = accounts_mod.get(store, account_id)
     if account is None:
-        raise DispatchBlocked(f"нет аккаунта {task['account_id']} в реестре")
+        raise DispatchBlocked(f"нет аккаунта {account_id} в реестре")
 
     ok, why = accounts_mod.usable(account, task["action"])
     if not ok:
@@ -99,20 +201,48 @@ def preflight(store: Store, task: dict, settings: Settings) -> None:
                 "allow_immediate_visible_actions=true у аккаунта в Radar"
             )
 
-    # Второй пояс поверх темпа Radar: свой дневной лимит на аккаунт.
     if action.visible:
-        today = datetime.now(timezone.utc).date().isoformat()
-        sent = store.one(
-            "SELECT count(*) AS n FROM tasks "
-            "WHERE account_id = ? AND substr(dispatched_at, 1, 10) = ? "
-            "  AND state NOT IN ('cancelled', 'blocked')",
-            (int(task["account_id"]), today),
-        )
-        if int(sent["n"]) >= settings.limits.per_account_daily_visible:
+        # Окно проверяется ещё раз здесь, а не только при планировании:
+        # задача могла пролежать в очереди до ночи из-за паузы или сбоя.
+        if not inside_send_window(settings):
             raise DispatchBlocked(
-                f"аккаунт уже выпустил {sent['n']} видимых действий за сегодня "
+                "сейчас вне окна отправки "
+                f"({settings.limits.send_window_start_hour}:00–"
+                f"{settings.limits.send_window_end_hour}:00 {settings.timezone})"
+            )
+        already = visible_sent_today(store, account_id)
+        already += int((spent or {}).get(account_id, 0))
+        if already >= settings.limits.per_account_daily_visible:
+            raise DispatchBlocked(
+                f"аккаунт уже выпустил {already} видимых действий за сегодня "
                 f"(лимит {settings.limits.per_account_daily_visible})"
             )
+
+    return action
+
+
+def _claim(store: Store, task: dict) -> str:
+    """Закрепить за задачей UUID. Если её уже забрали — вернуть чужой.
+
+    Атомарность здесь важнее краткости: без ``WHERE request_id IS NULL`` два
+    процесса выдали бы одной задаче два UUID, а это две отправки.
+    """
+    existing = task.get("request_id")
+    if existing:
+        return str(existing)
+
+    request_id = new_request_id()
+    cursor = store.execute(
+        "UPDATE tasks SET request_id = ?, updated_at = ? "
+        "WHERE id = ? AND request_id IS NULL",
+        (request_id, now(), task["id"]),
+    )
+    store.commit()
+    if cursor.rowcount:
+        return request_id
+
+    row = store.one("SELECT request_id FROM tasks WHERE id = ?", (task["id"],))
+    return str(row["request_id"]) if row and row["request_id"] else request_id
 
 
 async def dispatch(
@@ -130,46 +260,73 @@ async def dispatch(
     предпросмотр, ровно тот же список, который ушёл бы в боевом режиме.
     """
     limit = int(limit or settings.limits.dispatch_batch)
-    pending = orphaned(store)
-    fresh = due_tasks(store, campaign_id=campaign_id, limit=limit)
-    # Оборванные с прошлого раза идут первыми: их надо доиграть тем же UUID.
-    queue = pending + [t for t in fresh if t["id"] not in {p["id"] for p in pending}]
-    queue = queue[:limit]
+    armed = settings.armed
+    if confirm and armed:
+        with exclusive(settings):
+            return await _dispatch_armed(
+                store, settings, campaign_id=campaign_id, limit=limit, actor=actor
+            )
+    return _preview(store, settings, campaign_id=campaign_id, limit=limit,
+                    armed=armed, confirmed=confirm)
 
-    preview: list[dict] = []
+
+def _queue(store: Store, campaign_id: str | None, limit: int) -> list[dict]:
+    pending = orphaned(store, campaign_id=campaign_id)
+    fresh = due_tasks(store, campaign_id=campaign_id, limit=limit)
+    seen = {task["id"] for task in pending}
+    # Оборванные с прошлого раза идут первыми: их надо доиграть тем же UUID.
+    return (pending + [t for t in fresh if t["id"] not in seen])[:limit]
+
+
+def _preview(
+    store: Store, settings: Settings, *, campaign_id: str | None, limit: int,
+    armed: bool, confirmed: bool,
+) -> dict:
+    spent: dict[int, int] = {}
+    ready: list[dict] = []
     blocked: list[dict] = []
-    for task in queue:
+    for task in _queue(store, campaign_id, limit):
         try:
-            preflight(store, task, settings)
+            action = preflight(store, task, settings, spent=spent)
         except DispatchBlocked as exc:
             blocked.append({"task": task["id"], "why": str(exc)})
             continue
-        preview.append(task)
+        if action.visible:
+            spent[int(task["account_id"])] = spent.get(int(task["account_id"]), 0) + 1
+        ready.append(task)
 
-    armed = settings.armed
-    if not (confirm and armed):
-        return {
-            "armed": armed,
-            "confirmed": confirm,
-            "would_dispatch": len(preview),
-            "blocked": blocked,
-            "tasks": [_preview_row(store, t, settings.timezone) for t in preview],
-            "dispatched": 0,
-            "dry_run": True,
-        }
+    return {
+        "armed": armed,
+        "confirmed": confirmed,
+        "would_dispatch": len(ready),
+        "blocked": blocked,
+        "tasks": [_preview_row(store, t, settings.timezone) for t in ready],
+        "dispatched": 0,
+        "dry_run": True,
+    }
 
-    sent, failed = 0, []
+
+async def _dispatch_armed(
+    store: Store, settings: Settings, *, campaign_id: str | None, limit: int,
+    actor: str,
+) -> dict:
+    queue = _queue(store, campaign_id, limit)
+    sent = 0
+    blocked: list[dict] = []
+    failed: list[dict] = []
+    deferred: list[dict] = []
+
     async with RadarBridge(settings.dsn) as bridge:
-        for task in preview:
-            request_id = task.get("request_id") or new_request_id()
-            if not task.get("request_id"):
-                # Шаг 1: фиксируем UUID до любого обращения к Radar.
-                store.execute(
-                    "UPDATE tasks SET request_id = ?, updated_at = ? WHERE id = ?",
-                    (request_id, now(), task["id"]),
-                )
-                store.commit()
+        for task in queue:
+            # Проверяем непосредственно перед каждой отправкой, а не заранее
+            # для всего батча: иначе дневной лимит внутри прогона заморожен.
+            try:
+                preflight(store, task, settings)
+            except DispatchBlocked as exc:
+                blocked.append({"task": task["id"], "why": str(exc)})
+                continue
 
+            request_id = _claim(store, task)
             expires = (
                 datetime.fromisoformat(task["expires_at"])
                 if task.get("expires_at") else None
@@ -185,25 +342,33 @@ async def dispatch(
             )
 
             try:
-                # Шаг 2: сам enqueue. Повтор с тем же UUID идемпотентен.
                 command_id = await bridge.enqueue(int(task["account_id"]), request)
             except QueueFull as exc:
-                failed.append({"task": task["id"], "why": f"очередь моста полна: {exc}"})
+                # До вставки дело не дошло; остальной батч ждать смысла нет.
+                deferred.append({"task": task["id"], "why": f"очередь моста полна: {exc}"})
+                _note(store, task["id"], str(exc))
                 break
-            except BridgeError as exc:
+            except BridgeRejected as exc:
+                # Детерминированный отказ: повтор даст тот же результат.
                 failed.append({"task": task["id"], "why": str(exc)})
                 store.execute(
-                    "UPDATE tasks SET state='blocked', error_message=?, "
-                    "updated_at=? WHERE id=?",
+                    "UPDATE tasks SET state='blocked', error_code='bridge_rejected', "
+                    "error_message=?, updated_at=? WHERE id=?",
                     (str(exc)[:500], now(), task["id"]),
                 )
                 store.commit()
                 continue
+            except (BridgeUnknown, BridgeError) as exc:
+                # Могло уехать, а могло и нет. Оставляем задачу запланированной
+                # вместе с её UUID — следующий прогон переиграет ТЕМ ЖЕ UUID,
+                # и мост вернёт прежний command_id, если команда всё-таки есть.
+                deferred.append({"task": task["id"], "why": str(exc)})
+                _note(store, task["id"], str(exc))
+                continue
 
-            # Шаг 3: запоминаем, что вернул мост.
             store.execute(
-                "UPDATE tasks SET state='queued', command_id=?, dispatched_at=?, "
-                "updated_at=? WHERE id=?",
+                "UPDATE tasks SET state='queued', command_id=?, error_message=NULL, "
+                "dispatched_at=?, updated_at=? WHERE id=?",
                 (int(command_id), now(), now(), task["id"]),
             )
             store.execute(
@@ -214,17 +379,44 @@ async def dispatch(
             store.commit()
             sent += 1
 
-    store.log(actor, "dispatch", campaign_id or "*",
-              f"sent={sent} blocked={len(blocked)} failed={len(failed)}")
+    store.log(
+        actor, "dispatch", campaign_id or "*",
+        f"sent={sent} blocked={len(blocked)} deferred={len(deferred)} "
+        f"failed={len(failed)}",
+    )
     store.commit()
     return {
         "armed": True,
         "confirmed": True,
         "dispatched": sent,
         "blocked": blocked,
+        "deferred": deferred,
         "failed": failed,
         "dry_run": False,
     }
+
+
+def _note(store: Store, task_id: str, message: str) -> None:
+    store.execute(
+        "UPDATE tasks SET error_message = ?, updated_at = ? WHERE id = ?",
+        (message[:500], now(), task_id),
+    )
+    store.commit()
+
+
+def unblock(store: Store, task_ids: list[str], *, actor: str = "cli") -> int:
+    """Вернуть заблокированные задачи в план — после разбора причины."""
+    changed = 0
+    for task_id in task_ids:
+        cursor = store.execute(
+            "UPDATE tasks SET state='planned', error_code=NULL, error_message=NULL, "
+            "updated_at=? WHERE id=? AND state='blocked'",
+            (now(), task_id),
+        )
+        changed += cursor.rowcount
+    store.log(actor, "tasks.unblock", "", f"unblocked={changed}")
+    store.commit()
+    return changed
 
 
 def _preview_row(store: Store, task: dict, tz_name: str = "Europe/Moscow") -> dict:

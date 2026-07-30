@@ -439,10 +439,18 @@ def cmd_queue(args) -> int:
 def cmd_dispatch(args) -> int:
     settings = _settings(args, need_dsn=args.confirm)
     with _store(settings) as store:
-        result = asyncio.run(dispatcher.dispatch(
-            store, settings, campaign_id=args.campaign, limit=args.limit,
-            confirm=args.confirm, actor=args.actor,
-        ))
+        if args.unblock:
+            count = dispatcher.unblock(store, args.unblock, actor=args.actor)
+            print(f"возвращено в план: {count}")
+            return 0
+        try:
+            result = asyncio.run(dispatcher.dispatch(
+                store, settings, campaign_id=args.campaign, limit=args.limit,
+                confirm=args.confirm, actor=args.actor,
+            ))
+        except dispatcher.DispatchBusy as exc:
+            print(report.warn(str(exc)))
+            return 0
 
         if result.get("dry_run"):
             if result["tasks"]:
@@ -468,6 +476,10 @@ def cmd_dispatch(args) -> int:
         print(report.good(f"выпущено команд: {result['dispatched']}"))
         for item in result.get("blocked", [])[:20]:
             print(report.warn(f"{item['task']}: {item['why']}"))
+        for item in result.get("deferred", []):
+            print(report.warn(
+                f"{item['task']}: отложено, повторим тем же UUID — {item['why']}"
+            ))
         for item in result.get("failed", []):
             print(report.bad(f"{item['task']}: {item['why']}"))
     return 0
@@ -764,6 +776,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int)
     p.add_argument("--confirm", action="store_true",
                    help="реально поставить команды (нужен ещё и режим arm on)")
+    p.add_argument("--unblock", action="append", metavar="TASK_ID",
+                   help="вернуть заблокированную задачу в план")
     p.set_defaults(func=cmd_dispatch)
 
     p = sub.add_parser("arm", help="включить/выключить боевой режим")

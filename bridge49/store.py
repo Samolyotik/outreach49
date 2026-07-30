@@ -55,6 +55,8 @@ CREATE TABLE IF NOT EXISTS contacts (
 CREATE INDEX IF NOT EXISTS idx_contacts_segment ON contacts(segment, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_username
   ON contacts(lower(username)) WHERE username IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_contacts_tg_id
+  ON contacts(tg_id) WHERE tg_id IS NOT NULL;
 
 -- Тексты. Плейсхолдеры вида {name}.
 CREATE TABLE IF NOT EXISTS templates (
