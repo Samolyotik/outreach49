@@ -1,0 +1,8 @@
+#!/bin/sh
+# Тонкая обёртка: подставляет venv и корень установки.
+set -e
+BRIDGE49_HOME="${BRIDGE49_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+export BRIDGE49_HOME
+PY="$BRIDGE49_HOME/venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" -m bridge49.cli "$@"

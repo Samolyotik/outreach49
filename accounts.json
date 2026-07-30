@@ -1,0 +1,4176 @@
+[
+  {
+    "id": 801,
+    "label": "acc2016_259465983",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-27T21:16:33.205706+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 802,
+    "label": "acc2015_104019918",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-30T17:59:25.671545+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 803,
+    "label": "acc2015_125337110",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:25:04.754115+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 804,
+    "label": "acc2015_86905549",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-27T00:48:18.971602+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 805,
+    "label": "acc2016_133020637",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:29:23.902592+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 806,
+    "label": "acc2015_97197212",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-26T22:59:21.311543+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 807,
+    "label": "acc2015_94007178",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-27T22:40:17.575963+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 808,
+    "label": "acc2016_297724302",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-27T22:40:15.140984+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 809,
+    "label": "acc2016_192893518",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-28T10:06:08.648096+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 810,
+    "label": "acc2015_96868810",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-28T14:49:50.789098+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 811,
+    "label": "acc2015_179727076",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:32:47.226543+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 812,
+    "label": "acc2016_263234432",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-30T21:12:54.822842+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 813,
+    "label": "acc2016_263641707",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-27T00:40:19.184396+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 814,
+    "label": "acc2016_137179202",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-26T22:20:14.905427+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 815,
+    "label": "acc2016_266487927",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-27T03:06:33.071201+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 816,
+    "label": "acc2016_256909889",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-26T23:32:18.159031+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 818,
+    "label": "acc2015_88299925",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-28T20:15:51.817332+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 819,
+    "label": "acc2015_144512993",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-26T23:09:08.160765+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 820,
+    "label": "acc2015_127178390",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-27T02:15:55.485013+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 821,
+    "label": "acc2015_107152665",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-28T10:32:02.618205+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 822,
+    "label": "acc2015_135366388",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-28T10:40:27.501870+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 823,
+    "label": "acc2015_89710113",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-28T10:54:42.612401+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 824,
+    "label": "acc2015_94863544",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-28T10:09:37.861881+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 825,
+    "label": "acc2015_114291394",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-27T02:51:04.458549+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 826,
+    "label": "acc2015_93361873",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-28T10:41:15.247636+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 827,
+    "label": "acc2015_131767998",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-27T01:41:43.781114+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 828,
+    "label": "acc2015_94698186",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-26T23:46:37.038551+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 829,
+    "label": "acc2015_104729971",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:37:00.539708+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 830,
+    "label": "acc2015_126325223",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-27T00:09:49.686363+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 831,
+    "label": "acc2015_113292617",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-27T10:41:27.449204+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 832,
+    "label": "acc2015_100665769",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-26T22:51:14.153191+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 833,
+    "label": "acc2015_138122772",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-27T02:43:09.996678+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 836,
+    "label": "acc2015_175458620",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-28T02:34:43.196799+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 837,
+    "label": "acc2015_174919714",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-26T23:52:16.870927+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 838,
+    "label": "acc2015_105588505",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-28T10:40:15.848049+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 839,
+    "label": "acc2015_102104491",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-27T02:08:32.910970+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 840,
+    "label": "acc2015_108471236",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 103,
+    "program_code": "TGR11",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:21.421825+00:00",
+    "last_seen_at": "2026-07-27T02:54:47.775483+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 841,
+    "label": "acc2015_101797788",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:21:23.012550+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 842,
+    "label": "acc2015_106600731",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-30T14:52:48.793845+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 843,
+    "label": "acc2015_111667813",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-26T22:44:11.751413+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 844,
+    "label": "acc2015_121003028",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-26T22:34:59.355584+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 845,
+    "label": "acc2015_108026185",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-27T01:11:15.766772+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 846,
+    "label": "acc2015_96635841",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 104,
+    "program_code": "TGR12",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:09.827651+00:00",
+    "last_seen_at": "2026-07-26T22:47:12.622601+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 847,
+    "label": "acc2015_87401031",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-27T03:11:30.739984+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 848,
+    "label": "acc2015_95471693",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 101,
+    "program_code": "TGR9",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:18.531244+00:00",
+    "last_seen_at": "2026-07-27T11:15:35.468409+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 849,
+    "label": "acc2015_89418187",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:40:42.378317+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 850,
+    "label": "acc2015_121450384",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:51.989854+00:00",
+    "last_seen_at": "2026-07-28T17:45:41.117368+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "chat_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_deferred_public_chat_membership",
+        "command_dry_run",
+        "confirm_public_chat_membership",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "inspect_public_chat_target",
+        "join_public_chat",
+        "mark_messages_read",
+        "refresh_public_chat_membership",
+        "reply_private_dm",
+        "search_public_chat",
+        "send_chat_action",
+        "send_public_chat_message",
+        "send_typing",
+        "sync_private_dm_replies",
+        "verify_public_chat_message",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "update_username": {
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 851,
+    "label": "acc2015_143481509",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:02:17.170223+00:00",
+    "last_seen_at": "2026-07-27T02:29:06.911534+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "dm_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "command_dry_run",
+        "create_private_chat",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "send_chat_action",
+        "send_private_dm",
+        "send_typing",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_bio": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 852,
+    "label": "acc2015_134869835",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-07-30T22:01:48.812063+00:00",
+    "last_seen_at": "2026-07-28T20:17:41.402257+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "source_reader"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
+      ],
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "update_name": {
+          "enabled": true,
+          "tickets": 11574,
+          "_completed_runs": 1,
+          "max_lottery_runs": 1
+        },
+        "get_top_peers": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "download_avatars": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        },
+        "read_recent_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "set_online_presence": {
+          "enabled": true,
+          "_completed_runs": 1
+        },
+        "scroll_older_history": {
+          "enabled": true,
+          "_completed_runs": 1
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,10 @@
+[Unit]
+Description=bridge49 poll каждые 2 минуты
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

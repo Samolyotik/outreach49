@@ -1,0 +1,10 @@
+[Unit]
+Description=bridge49 — забрать результаты команд и входящие
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/bridge49
+Environment=BRIDGE49_HOME=/opt/bridge49
+ExecStart=/opt/bridge49/bin/bridge49 poll
+TimeoutStartSec=300
