@@ -154,6 +154,21 @@ CREATE TABLE IF NOT EXISTS threads (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_threads_peer ON threads(account_id, peer_key);
 
+-- Переписка, перенесённая из прежней системы. Наши собственные исходящие
+-- живут в tasks, входящие — в inbound; сюда попадает только импорт, чтобы
+-- история диалога не обрывалась на дате перехода.
+CREATE TABLE IF NOT EXISTS history (
+  id          TEXT PRIMARY KEY,
+  thread_id   TEXT NOT NULL REFERENCES threads(id),
+  direction   TEXT NOT NULL,                     -- inbound | outbound
+  author      TEXT,                              -- system | manager | recipient
+  text        TEXT NOT NULL DEFAULT '',
+  sent_at     TEXT,
+  origin      TEXT NOT NULL DEFAULT 'import',
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_history_thread ON history(thread_id, sent_at);
+
 -- Что менеджеру надо взять руками.
 CREATE TABLE IF NOT EXISTS handoffs (
   id          TEXT PRIMARY KEY,

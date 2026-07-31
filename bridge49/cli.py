@@ -557,40 +557,62 @@ def cmd_thread(args) -> int:
         if thread is None:
             print(report.bad("нет такого диалога"))
             return 1
+        contact = store.one(
+            "SELECT * FROM contacts WHERE id = ?", (thread["contact_id"],)
+        )
         print(report.kv([
             ("диалог", thread["id"]),
-            ("аккаунт", thread["account_id"]),
-            ("собеседник", thread["peer_key"]),
+            ("собеседник", (contact["username"] if contact else None)
+             or thread["peer_key"]),
+            ("имя", contact["display_name"] if contact else None),
+            ("аккаунт", thread["account_id"] or "— (переписка до перехода)"),
             ("канал", thread["surface"]),
             ("состояние", thread["state"]),
         ]))
 
-        print(report.section("исходящие"))
-        print(report.table([
-            {
-                "когда": report.local_time(row["dispatched_at"], settings.timezone),
-                "действие": row["action"],
-                "состояние": row["state"],
-                "текст": (loads(row["params"], {}).get("text") or "")[:80],
-            }
+        # Единая лента: перенесённая история, наши исходящие и входящие.
+        timeline: list[dict] = []
+        for row in store.query(
+            "SELECT * FROM history WHERE thread_id = ?", (thread["id"],)
+        ):
+            timeline.append({
+                "at": row["sent_at"] or row["created_at"],
+                "кто": "они" if row["direction"] == "inbound" else "мы",
+                "источник": "перенос",
+                "текст": row["text"] or "",
+            })
+        if thread["contact_id"]:
             for row in store.query(
                 "SELECT * FROM tasks WHERE contact_id = ? ORDER BY created_at",
                 (thread["contact_id"],),
-            )
-        ]))
+            ):
+                timeline.append({
+                    "at": row["dispatched_at"] or row["scheduled_at"],
+                    "кто": "мы",
+                    "источник": f"{row['action']} / {row['state']}",
+                    "текст": loads(row["params"], {}).get("text") or "",
+                })
+        for row in store.query(
+            "SELECT * FROM inbound WHERE account_id = ? AND peer_key = ? ORDER BY id",
+            (thread["account_id"], thread["peer_key"]),
+        ):
+            timeline.append({
+                "at": row["sent_at"] or row["created_at"],
+                "кто": "они",
+                "источник": "входящее",
+                "текст": row["text"] or "",
+            })
 
-        print(report.section("входящие"))
+        timeline.sort(key=lambda item: item["at"] or "")
+        print(report.section(f"переписка ({len(timeline)})"))
         print(report.table([
             {
-                "когда": report.local_time(row["sent_at"] or row["created_at"], settings.timezone),
-                "id": row["id"],
-                "текст": (row["text"] or "")[:100],
+                "когда": report.local_time(item["at"], settings.timezone),
+                "кто": item["кто"],
+                "источник": item["источник"],
+                "текст": item["текст"][:120],
             }
-            for row in store.query(
-                "SELECT * FROM inbound WHERE account_id = ? AND peer_key = ? "
-                "ORDER BY id",
-                (thread["account_id"], thread["peer_key"]),
-            )
+            for item in timeline[-args.limit:]
         ]))
     return 0
 
@@ -797,6 +819,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("thread", help="один диалог целиком")
     p.add_argument("thread")
+    p.add_argument("--limit", type=int, default=50,
+                   help="сколько последних сообщений показать")
     p.set_defaults(func=cmd_thread)
 
     p = sub.add_parser("handoffs", help="что ждёт менеджера")

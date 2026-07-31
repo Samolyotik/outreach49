@@ -125,22 +125,90 @@ def render(store: Store, settings: Settings, path: str, query: dict) -> str:
 
     elif path == "/threads":
         rows = store.query(
-            "SELECT t.*, c.username, a.label FROM threads t "
+            "SELECT t.*, c.username, c.display_name, a.label, "
+            "  (SELECT count(*) FROM history h WHERE h.thread_id = t.id) AS hist "
+            "FROM threads t "
             "LEFT JOIN contacts c ON c.id = t.contact_id "
             "LEFT JOIN accounts a ON a.id = t.account_id "
             "ORDER BY COALESCE(t.last_inbound_at, t.last_outbound_at) DESC LIMIT ?",
             (limit,)
         )
-        body = _table([
-            {
-                "аккаунт": f"{r['account_id']} {r['label'] or ''}".strip(),
-                "собеседник": r["username"] or r["peer_key"],
-                "канал": r["surface"],
-                "состояние": r["state"],
-                "последний ответ": (r["last_inbound_at"] or "—")[:16].replace("T", " "),
-            } for r in rows
-        ])
+        head = "<tr><th>собеседник</th><th>аккаунт</th><th>состояние</th>" \
+               "<th>последний ответ</th><th>сообщений</th></tr>"
+        cells = []
+        for r in rows:
+            who = html.escape(str(r["username"] or r["peer_key"]))
+            name = html.escape(str(r["display_name"] or ""))
+            account = "— (до перехода)" if not r["account_id"] else \
+                f"{r['account_id']} {r['label'] or ''}".strip()
+            cells.append(
+                f'<tr><td><a href="/thread?id={html.escape(r["id"])}">{who}</a>'
+                f'{" · " + name if name else ""}</td>'
+                f'<td>{html.escape(account)}</td>'
+                f'<td>{html.escape(str(r["state"]))}</td>'
+                f'<td>{html.escape((r["last_inbound_at"] or "—")[:16].replace("T", " "))}</td>'
+                f'<td class="num">{r["hist"]}</td></tr>'
+            )
+        body = (f"<table><thead>{head}</thead><tbody>{''.join(cells)}</tbody></table>"
+                if cells else '<p class="safe">(пусто)</p>')
         title = "Диалоги"
+
+    elif path == "/thread":
+        thread_id = (query.get("id") or [""])[0]
+        thread = store.one("SELECT * FROM threads WHERE id = ?", (thread_id,))
+        if thread is None:
+            body = '<p class="safe">Диалог не найден.</p>'
+            title = "Диалог"
+        else:
+            contact = store.one(
+                "SELECT * FROM contacts WHERE id = ?", (thread["contact_id"],)
+            )
+            timeline = []
+            for r in store.query(
+                "SELECT * FROM history WHERE thread_id = ?", (thread_id,)
+            ):
+                timeline.append((r["sent_at"] or r["created_at"],
+                                 r["direction"], "перенос", r["text"] or ""))
+            if thread["contact_id"]:
+                for r in store.query(
+                    "SELECT * FROM tasks WHERE contact_id = ?",
+                    (thread["contact_id"],)
+                ):
+                    timeline.append((
+                        r["dispatched_at"] or r["scheduled_at"], "outbound",
+                        f"{r['action']} / {r['state']}",
+                        loads(r["params"], {}).get("text") or "",
+                    ))
+            for r in store.query(
+                "SELECT * FROM inbound WHERE account_id = ? AND peer_key = ?",
+                (thread["account_id"], thread["peer_key"])
+            ):
+                timeline.append((r["sent_at"] or r["created_at"], "inbound",
+                                 "входящее", r["text"] or ""))
+            timeline.sort(key=lambda item: item[0] or "")
+
+            who = html.escape(str(
+                (contact["username"] if contact else None) or thread["peer_key"]
+            ))
+            body = (
+                f"<h2>{who}</h2>"
+                + _cards([
+                    ("состояние", thread["state"]),
+                    ("канал", thread["surface"]),
+                    ("аккаунт", thread["account_id"] or "до перехода"),
+                    ("сообщений", len(timeline)),
+                ])
+                + _table([
+                    {
+                        "когда": (at or "")[:16].replace("T", " "),
+                        "кто": "они" if direction == "inbound" else "мы",
+                        "источник": origin,
+                        "текст": text,
+                    }
+                    for at, direction, origin, text in timeline[-300:]
+                ])
+            )
+            title = "Диалог"
 
     elif path == "/inbox":
         rows = store.query(
