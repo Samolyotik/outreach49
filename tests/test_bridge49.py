@@ -343,6 +343,112 @@ class FakeBridge:
         return [r for r in self.rows if int(r["id"]) > int(after_id)][:limit]
 
 
+class FakeResultBridge(FakeBridge):
+    async def results(self, command_ids):
+        wanted = {int(command_id) for command_id in command_ids}
+        return [r for r in self.rows if int(r["id"]) in wanted]
+
+
+class ResultPollTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        entities.add_campaign(
+            self.store, name="results", action="command_dry_run",
+            segment="results", campaign_id="results",
+        )
+        entities.add_contact(self.store, username="result_lead",
+                             segment="results")
+        planner.plan(
+            self.store, "results", limits=self.settings.limits, dry_run=False,
+        )
+        self.store.execute(
+            "UPDATE tasks SET state='queued', command_id=1001, "
+            "dispatched_at='2026-08-01T06:21:48+00:00'"
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _poll(self, rows):
+        original = pollers.RadarBridge
+        pollers.RadarBridge = FakeResultBridge(rows)
+        try:
+            return asyncio.run(pollers.poll_results(self.store, self.settings))
+        finally:
+            pollers.RadarBridge = original
+
+    def _task(self):
+        return dict(self.store.one("SELECT * FROM tasks"))
+
+    @staticmethod
+    def _record(*, status="done", result=None, updated_at="2026-08-01T06:22:20+00:00"):
+        details = {} if result is None else {"result": result}
+        return {
+            "id": 1001,
+            "status": status,
+            "last_error": None,
+            "updated_at": updated_at,
+            "details": details,
+        }
+
+    def test_terminal_status_without_result_stays_observable(self):
+        result = self._poll([self._record()])
+
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["still_running"], 1)
+        self.assertEqual(self._task()["state"], "queued")
+
+    def test_later_authoritative_result_completes_the_same_task(self):
+        self._poll([self._record()])
+        result = self._poll([
+            self._record(
+                result={"outcome": "succeeded", "data": {}},
+                updated_at="2026-08-01T06:22:24+00:00",
+            )
+        ])
+
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(self._task()["state"], "done")
+        self.assertEqual(self._task()["outcome"], "succeeded")
+
+    def test_old_false_failed_row_is_reconciled(self):
+        self.store.execute(
+            "UPDATE tasks SET state='failed', outcome=NULL, result='{}'"
+        )
+        self.store.commit()
+
+        result = self._poll([
+            self._record(result={"outcome": "succeeded", "data": {}})
+        ])
+
+        self.assertEqual(result["checked"], 1)
+        self.assertEqual(self._task()["state"], "done")
+        self.assertEqual(self._task()["outcome"], "succeeded")
+
+    def test_outcome_unknown_is_rechecked_for_radar_recovery(self):
+        self._poll([
+            self._record(
+                status="failed",
+                result={
+                    "outcome": "outcome_unknown",
+                    "error": {"code": "stale_after_effect_marker"},
+                },
+            )
+        ])
+        self.assertEqual(self._task()["state"], "failed")
+        self.assertEqual(self._task()["outcome"], "outcome_unknown")
+
+        self._poll([
+            self._record(result={"outcome": "succeeded", "data": {}})
+        ])
+
+        self.assertEqual(self._task()["state"], "done")
+        self.assertEqual(self._task()["outcome"], "succeeded")
+
+
 def inbound_record(notification_id: int, *, job: str, conversation: str) -> dict:
     return {
         "id": notification_id,

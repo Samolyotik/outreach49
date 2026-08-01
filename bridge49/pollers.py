@@ -24,7 +24,12 @@ async def poll_results(
     """Подтянуть статусы всех задач, которые ждут ответа моста."""
     rows = store.query(
         "SELECT id, command_id FROM tasks "
-        "WHERE command_id IS NOT NULL AND state IN ('queued') ORDER BY command_id"
+        "WHERE command_id IS NOT NULL AND ("
+        "state = 'queued' OR "
+        "(state = 'failed' AND outcome = 'outcome_unknown') OR "
+        "(state = 'failed' AND outcome IS NULL "
+        " AND (result IS NULL OR result = '{}'))"
+        ") ORDER BY command_id"
     )
     if not rows:
         return {"checked": 0, "updated": 0, "still_running": 0}
@@ -41,7 +46,8 @@ async def poll_results(
         details = record.get("details") or {}
         if isinstance(details, str):
             details = loads(details, {})
-        result = details.get("result") or {}
+        raw_result = details.get("result")
+        result = raw_result if isinstance(raw_result, dict) else {}
         status = str(record.get("status") or "")
 
         if status in ("new", "processing"):
@@ -55,6 +61,15 @@ async def poll_results(
             continue
 
         outcome = str(result.get("outcome") or "")
+        if status in ("done", "skipped", "failed") and not outcome:
+            # Mature-DM delivery is persisted in two short DB transactions:
+            # the adapter may expose ``done`` after the accepted Telegram
+            # message is durable but before Radar appends details.result.  An
+            # empty terminal snapshot is therefore not a failure; keep polling
+            # until the authoritative result appears.  The query above also
+            # recovers rows misclassified by older bridge49 versions.
+            running += 1
+            continue
         error = result.get("error") or {}
         state = {
             "done": "done" if outcome == "succeeded" else "failed",
