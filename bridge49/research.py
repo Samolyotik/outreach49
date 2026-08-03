@@ -115,9 +115,11 @@ def _verdict(action: str, state: str, result: dict, error: str | None) -> str:
         return "есть личка" if availability == "available" else str(availability)
     decision = result.get("decision")
     if decision:
-        return {"eligible": "можно писать", "restricted": "закрыт"}.get(
-            str(decision), str(decision)
-        )
+        return {
+            "eligible": "можно писать",
+            "restricted": "закрыт",
+            "paid": "платный",
+        }.get(str(decision), str(decision))
     if result.get("chat"):
         return "найден"
     return "пусто" if not error else "отказ"
