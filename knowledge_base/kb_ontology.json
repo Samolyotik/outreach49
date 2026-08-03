@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "updated_at": "2026-07-25",
+  "description": "Aliases and topic expansions for KB routing. Keep terms concise to avoid broad accidental matches.",
+  "topics": {
+    "pricing": {
+      "canonical_terms": ["pricing", "цена", "стоимость", "тариф"],
+      "aliases": ["сколько стоит", "прайс", "платный", "оплата", "счет", "счёт", "договор", "внедрение", "акция", "промо", "0 ₽", "price", "cost"],
+      "expand_with": ["pricing_policy.md", "answer_cards/pricing.md", "FACT_PRICING_PUBLIC", "FACT_PRICING_LIMITS", "FACT_IMPLEMENTATION_PROMO"]
+    },
+    "cases": {
+      "canonical_terms": ["кейсы", "результаты"],
+      "aliases": ["кейс", "цифры", "окупаемость", "что получилось", "пример результата", "roi"],
+      "expand_with": ["case_studies.md", "answer_cards/cases.md", "FACT_CASES_PUBLIC", "FACT_CASES_PRESENTATION"]
+    },
+    "reviews": {
+      "canonical_terms": ["reviews", "отзывы"],
+      "aliases": ["отзыв", "клиенты говорят", "доверие", "яндекс"],
+      "expand_with": ["reviews.md", "answer_cards/reviews.md", "FACT_REVIEWS_PUBLIC"]
+    },
+    "signal_examples": {
+      "canonical_terms": ["signal_examples", "пример сигнала"],
+      "aliases": ["покажите", "показать пример", "как выглядит", "что получает менеджер", "пример лида"],
+      "expand_with": ["examples/signal_examples.md", "answer_cards/signal_examples.md", "FACT_SIGNAL_CONTENTS"]
+    },
+    "services": {
+      "canonical_terms": ["services", "услуги", "сценарии"],
+      "aliases": ["что делаете", "для отдела продаж", "мониторинг", "репутация", "конкуренты", "аналитика спроса", "api", "webhook", "интеграция", "автоматизация", "автоматическое общение", "fact-checking", "фактчекинг", "сми"],
+      "expand_with": ["service_scenarios.md", "answer_cards/services.md", "FACT_PRODUCT_CORE", "FACT_AUTOMATION_AND_INTEGRATIONS", "FACT_MEDIA_FACT_CHECKING"]
+    },
+    "outreach_surfaces": {
+      "canonical_terms": ["outreach_surfaces", "каналы", "чаты", "личные сообщения"],
+      "aliases": ["людям или каналам", "писать каналам", "пишете каналам", "личку", "direct messages", "dm каналов", "источники outreach", "открытые источники", "закрытые источники", "telegram", "вконтакте", "vk", "max"],
+      "expand_with": ["answer_cards/outreach_surfaces.md", "FACT_OUTREACH_SURFACES", "FACT_SOURCE_SCOPE", "product_overview.md", "service_scenarios.md"]
+    },
+    "contact_source": {
+      "canonical_terms": ["contact_source", "источник контакта", "согласие"],
+      "aliases": ["откуда мой контакт", "откуда у вас мой контакт", "почему вы мне пишете", "где взяли контакт", "я давал согласие"],
+      "expand_with": ["answer_cards/contact_source.md", "company_profile.md", "allowed_claims.md", "forbidden_claims.md"]
+    },
+    "sector_fit": {
+      "canonical_terms": ["sector_fit", "ниша", "сфера"],
+      "aliases": ["подойдет", "подойдёт", "отрасль", "для клиники", "для авто", "для crm", "для 1с", "для логистики"],
+      "expand_with": ["answer_cards/sector_fit.md", "service_scenarios.md"]
+    },
+    "partner_program": {
+      "canonical_terms": ["partner_program", "партнерка"],
+      "aliases": ["партнерская программа", "партнёрская программа", "реферал", "комиссия", "выплаты", "рекомендовать клиентам", "бывший клиент", "действующий клиент", "реанимировать"],
+      "expand_with": ["partner_program.md", "answer_cards/partner_program.md", "FACT_PARTNER_PROGRAM"]
+    },
+    "legal_sensitive": {
+      "canonical_terms": ["legal_sensitive", "handoff"],
+      "aliases": ["договор", "счет", "счёт", "персональные данные", "юридический", "медицинский", "документы", "запуск теста", "доступ"],
+      "expand_with": ["answer_cards/legal_sensitive.md", "RULE_MANAGER_HANDOFF", "RULE_NO_GUARANTEES"]
+    },
+    "company_identity": {
+      "canonical_terms": ["company", "сайт", "кто вы"],
+      "aliases": ["какая компания", "официальный сайт", "от какой компании", "кто вы"],
+      "expand_with": ["company_profile.md", "site_pages.md", "answer_cards/company_identity.md"]
+    },
+    "blog": {
+      "canonical_terms": ["blog", "блог"],
+      "aliases": ["статьи", "почитать", "материалы", "где почитать"],
+      "expand_with": ["blog_content.md", "answer_cards/blog.md"]
+    }
+  }
+}

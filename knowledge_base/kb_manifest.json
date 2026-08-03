@@ -1,0 +1,465 @@
+{
+  "version": 1,
+  "updated_at": "2026-07-25",
+  "description": "Manifest for TG RADAR Outreach presales knowledge retrieval. Source metadata is used for routing, scoring, audits and evals.",
+  "required_source_metadata_fields": [
+    "topic",
+    "intent",
+    "audience",
+    "risk",
+    "source_url",
+    "updated_at",
+    "priority"
+  ],
+  "sources": {
+    "answer_packs/pricing_pack.md": {
+      "topic": ["pricing", "free_test"],
+      "intent": ["pricing_question", "demo_question", "faq_question"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_packs/pricing_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 98,
+      "recommended_for_presales": true,
+      "tags": ["цена", "стоимость", "тариф", "прайс", "оплата", "договор", "внедрение", "0 ₽", "акция", "промо"]
+    },
+    "answer_packs/cases_pack.md": {
+      "topic": ["cases", "proof"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_packs/cases_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 96,
+      "recommended_for_presales": true,
+      "tags": ["кейс", "кейсы", "результат", "цифры", "окупаемость", "roi", "исторический пример"]
+    },
+    "answer_packs/reviews_pack.md": {
+      "topic": ["reviews", "proof"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_packs/reviews_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 95,
+      "recommended_for_presales": true,
+      "tags": ["отзыв", "отзывы", "клиенты", "доверие", "яндекс"]
+    },
+    "answer_packs/signal_examples_pack.md": {
+      "topic": ["signal_examples", "product"],
+      "intent": ["faq_question", "demo_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_packs/signal_examples_pack.md",
+      "updated_at": "2026-07-09",
+      "priority": 95,
+      "recommended_for_presales": true,
+      "tags": ["пример", "примеры", "сигнал", "как выглядит", "покажите"]
+    },
+    "answer_packs/services_pack.md": {
+      "topic": ["services", "product"],
+      "intent": ["faq_question", "unknown_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_packs/services_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 94,
+      "recommended_for_presales": true,
+      "tags": ["услуги", "сценарии", "лиды", "мониторинг", "репутация", "аналитика", "сайт", "автоматизация", "api", "webhook", "crm", "fact-checking"]
+    },
+    "answer_packs/sector_fit_pack.md": {
+      "topic": ["sector_fit", "sectors"],
+      "intent": ["faq_question", "positive", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_packs/sector_fit_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 94,
+      "recommended_for_presales": true,
+      "tags": ["ниша", "сфера", "отрасль", "подходит", "авто", "медицина", "crm", "1с", "вед", "открытые источники", "закрытые источники"]
+    },
+    "answer_packs/partner_program_pack.md": {
+      "topic": ["partner_program"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_packs/partner_program_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 93,
+      "recommended_for_presales": true,
+      "tags": ["партнер", "партнёр", "реферал", "комиссия", "выплаты", "рекомендовать", "бывший клиент", "реанимация"]
+    },
+    "answer_packs/legal_sensitive_pack.md": {
+      "topic": ["legal_sensitive", "handoff"],
+      "intent": ["faq_question", "pricing_question", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/answer_packs/legal_sensitive_pack.md",
+      "updated_at": "2026-07-25",
+      "priority": 99,
+      "recommended_for_presales": true,
+      "tags": ["договор", "счет", "счёт", "оплата", "персональные данные", "юридический", "медицинский", "консультация", "compliance"]
+    },
+    "product_overview.md": {
+      "topic": ["product", "positioning"],
+      "intent": ["greeting", "faq_question", "positive", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/",
+      "updated_at": "2026-07-25",
+      "priority": 90,
+      "recommended_for_presales": true,
+      "tags": ["что такое", "как работает", "сигнал", "telegram", "вконтакте", "vk", "max", "закрытые источники", "hot", "warm", "cold", "other", "лиды"]
+    },
+    "company_profile.md": {
+      "topic": ["company", "product"],
+      "intent": ["greeting", "faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/",
+      "updated_at": "2026-07-25",
+      "priority": 88,
+      "recommended_for_presales": true,
+      "tags": ["компания", "сайт", "бренд", "tg radar", "кто вы", "telegram", "вконтакте", "max"]
+    },
+    "site_pages.md": {
+      "topic": ["site_links", "proof", "legal_pages"],
+      "intent": ["faq_question", "pricing_question", "demo_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/",
+      "updated_at": "2026-07-25",
+      "priority": 89,
+      "recommended_for_presales": true,
+      "tags": ["сайт", "ссылка", "страница", "кейсы", "отзывы", "цены", "блог", "fact-checking", "сми"]
+    },
+    "service_scenarios.md": {
+      "topic": ["services", "use_cases"],
+      "intent": ["faq_question", "positive", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/uslugi",
+      "updated_at": "2026-07-25",
+      "priority": 87,
+      "recommended_for_presales": true,
+      "tags": ["услуги", "b2b", "b2c", "мониторинг", "репутация", "рынок", "тренды", "сайт", "автоматизация", "api", "webhook", "crm", "fact-checking", "сми", "не входит"]
+    },
+    "case_studies.md": {
+      "topic": ["cases", "proof"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "https://tgradar.ru/cases",
+      "updated_at": "2026-07-25",
+      "priority": 87,
+      "recommended_for_presales": true,
+      "tags": ["кейсы", "результаты", "авто", "маркетинг", "туризм", "недвижимость", "it", "юрист", "доставка", "roi", "окупаемость"]
+    },
+    "reviews.md": {
+      "topic": ["reviews", "proof"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/otzyvy",
+      "updated_at": "2026-07-25",
+      "priority": 86,
+      "recommended_for_presales": true,
+      "tags": ["отзывы", "клиенты", "доверие", "социальное доказательство"]
+    },
+    "examples/signal_examples.md": {
+      "topic": ["signal_examples"],
+      "intent": ["faq_question", "demo_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/primery-signalov",
+      "updated_at": "2026-07-09",
+      "priority": 86,
+      "recommended_for_presales": true,
+      "tags": ["пример сигнала", "как выглядит", "покажите", "сигнал"]
+    },
+    "partner_program.md": {
+      "topic": ["partner_program"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "https://tgradar.ru/partners",
+      "updated_at": "2026-07-25",
+      "priority": 84,
+      "recommended_for_presales": true,
+      "tags": ["партнер", "реферал", "комиссия", "10%", "выплаты", "бывший клиент", "действующий клиент", "реанимация"]
+    },
+    "blog_content.md": {
+      "topic": ["blog", "education"],
+      "intent": ["faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "https://tgradar.ru/blog",
+      "updated_at": "2026-07-25",
+      "priority": 75,
+      "recommended_for_presales": true,
+      "tags": ["блог", "статьи", "почитать", "материалы"]
+    },
+    "pricing_policy.md": {
+      "topic": ["pricing", "free_test"],
+      "intent": ["pricing_question", "demo_question", "faq_question"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "https://tgradar.ru/price",
+      "updated_at": "2026-07-26",
+      "priority": 88,
+      "recommended_for_presales": true,
+      "tags": ["цена", "стоимость", "тариф", "go", "plus", "pro", "лимиты", "внедрение", "0 ₽", "акция", "промо"]
+    },
+    "free_test.md": {
+      "topic": ["free_test", "demo"],
+      "intent": ["demo_question", "positive", "pricing_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/free_test.md",
+      "updated_at": "2026-07-26",
+      "priority": 85,
+      "recommended_for_presales": true,
+      "tags": ["тест", "демо", "демо-бот", "три дня", "без ограничения", "бесплатный доступ", "подключение"]
+    },
+    "faq.md": {
+      "topic": ["faq", "general"],
+      "intent": ["greeting", "faq_question", "pricing_question", "demo_question", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/faq.md",
+      "updated_at": "2026-07-26",
+      "priority": 83,
+      "recommended_for_presales": true,
+      "tags": ["faq", "вопрос", "сайт", "цена", "кейсы", "отзывы", "партнерка", "блокировка", "площадки", "закрытые источники", "api", "webhook", "автоматизация", "классификация", "fact-checking"]
+    },
+    "objections.md": {
+      "topic": ["objections", "sales"],
+      "intent": ["faq_question", "unknown_question", "neutral"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/objections.md",
+      "updated_at": "2026-07-25",
+      "priority": 78,
+      "recommended_for_presales": true,
+      "tags": ["не актуально", "спам", "гарантии", "реклама", "парсинг"]
+    },
+    "offer.md": {
+      "topic": ["offer", "cta"],
+      "intent": ["greeting", "positive", "demo_question"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/offer.md",
+      "updated_at": "2026-07-26",
+      "priority": 82,
+      "recommended_for_presales": true,
+      "tags": ["оффер", "бесплатный доступ", "демо", "продажа", "площадки", "закрытые источники", "автоматизация"]
+    },
+    "allowed_claims.md": {
+      "topic": ["guardrails", "allowed_claims"],
+      "intent": ["faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/allowed_claims.md",
+      "updated_at": "2026-07-25",
+      "priority": 80,
+      "recommended_for_presales": true,
+      "tags": ["можно говорить", "утверждения", "ограничения", "блокировка", "открытые источники", "закрытые источники", "площадки", "api", "roi", "законность", "границы услуги"]
+    },
+    "forbidden_claims.md": {
+      "topic": ["guardrails", "forbidden_claims"],
+      "intent": ["faq_question", "unknown_question", "pricing_question"],
+      "audience": "internal_llm",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/forbidden_claims.md",
+      "updated_at": "2026-07-25",
+      "priority": 80,
+      "recommended_for_presales": false,
+      "tags": ["нельзя говорить", "гарантии", "запреты", "риски"]
+    },
+    "compliance_notes.md": {
+      "topic": ["compliance", "risk"],
+      "intent": ["unknown_question", "faq_question"],
+      "audience": "internal_llm",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/compliance_notes.md",
+      "updated_at": "2026-07-09",
+      "priority": 70,
+      "recommended_for_presales": false,
+      "tags": ["compliance", "персональные данные", "юридические вопросы"]
+    },
+    "sector_notes/auto_china.md": {
+      "topic": ["sector_fit", "auto_china"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/sector_notes/auto_china.md",
+      "updated_at": "2026-07-09",
+      "priority": 78,
+      "recommended_for_presales": true,
+      "tags": ["авто", "китай", "машины", "автодилер", "автоподбор"]
+    },
+    "sector_notes/logistics_ved.md": {
+      "topic": ["sector_fit", "logistics_ved"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/sector_notes/logistics_ved.md",
+      "updated_at": "2026-07-09",
+      "priority": 77,
+      "recommended_for_presales": true,
+      "tags": ["вед", "логистика", "китай", "доставка", "таможня"]
+    },
+    "sector_notes/marketing.md": {
+      "topic": ["sector_fit", "marketing"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/sector_notes/marketing.md",
+      "updated_at": "2026-07-09",
+      "priority": 76,
+      "recommended_for_presales": true,
+      "tags": ["маркетинг", "реклама", "smm", "seo", "лидогенерация"]
+    },
+    "sector_notes/real_estate_repair.md": {
+      "topic": ["sector_fit", "real_estate_repair"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/sector_notes/real_estate_repair.md",
+      "updated_at": "2026-07-09",
+      "priority": 76,
+      "recommended_for_presales": true,
+      "tags": ["недвижимость", "ремонт", "квартира", "риелтор"]
+    },
+    "sector_notes/tourism_visas.md": {
+      "topic": ["sector_fit", "tourism_visas"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/sector_notes/tourism_visas.md",
+      "updated_at": "2026-07-09",
+      "priority": 75,
+      "recommended_for_presales": true,
+      "tags": ["туризм", "визы", "релокация", "путешествия"]
+    },
+    "sector_notes/crm_1c.md": {
+      "topic": ["sector_fit", "crm_1c"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/sector_notes/crm_1c.md",
+      "updated_at": "2026-07-09",
+      "priority": 76,
+      "recommended_for_presales": true,
+      "tags": ["crm", "црм", "1с", "amo", "битрикс", "erp"]
+    },
+    "sector_notes/legal_bankruptcy.md": {
+      "topic": ["sector_fit", "legal_bankruptcy"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/sector_notes/legal_bankruptcy.md",
+      "updated_at": "2026-07-09",
+      "priority": 74,
+      "recommended_for_presales": true,
+      "tags": ["банкротство", "юрист", "долги", "право"]
+    },
+    "sector_notes/medicine.md": {
+      "topic": ["sector_fit", "medicine"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/sector_notes/medicine.md",
+      "updated_at": "2026-07-09",
+      "priority": 74,
+      "recommended_for_presales": true,
+      "tags": ["медицина", "клиника", "врач", "стоматология", "диагностика"]
+    },
+    "tone_of_voice.md": {
+      "topic": ["tone"],
+      "intent": ["all"],
+      "audience": "internal_llm",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/tone_of_voice.md",
+      "updated_at": "2026-07-09",
+      "priority": 70,
+      "recommended_for_presales": false,
+      "tags": ["стиль", "тон", "telegram"]
+    },
+    "autonomous_presales_policy.md": {
+      "topic": ["policy", "presales"],
+      "intent": ["all"],
+      "audience": "internal_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/autonomous_presales_policy.md",
+      "updated_at": "2026-07-26",
+      "priority": 70,
+      "recommended_for_presales": false,
+      "tags": ["policy", "handoff", "llm"]
+    },
+    "presales_assistant_playbook.md": {
+      "topic": ["policy", "playbook"],
+      "intent": ["all"],
+      "audience": "internal_llm",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/presales_assistant_playbook.md",
+      "updated_at": "2026-07-26",
+      "priority": 70,
+      "recommended_for_presales": false,
+      "tags": ["playbook", "handoff", "faq"]
+    },
+    "source_coverage.md": {
+      "topic": ["source_coverage", "audit"],
+      "intent": ["internal_audit"],
+      "audience": "internal",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/source_coverage.md",
+      "updated_at": "2026-07-09",
+      "priority": 60,
+      "recommended_for_presales": false,
+      "tags": ["coverage", "audit", "источники"]
+    }
+  },
+  "answer_packs": {
+    "pricing_pack": {
+      "source": "answer_packs/pricing_pack.md",
+      "terms": ["цена", "цену", "стоимость", "стоит", "тариф", "прайс", "оплата", "счет", "счёт", "договор", "внедрение", "0 ₽", "акция", "промо", "price", "pricing", "cost"],
+      "source_hints": ["pricing_policy.md", "site_pages.md", "free_test.md"]
+    },
+    "cases_pack": {
+      "source": "answer_packs/cases_pack.md",
+      "terms": ["кейс", "кейсы", "результат", "результаты", "цифры", "получалось", "roi", "окупаемость"],
+      "source_hints": ["case_studies.md", "site_pages.md", "allowed_claims.md"]
+    },
+    "reviews_pack": {
+      "source": "answer_packs/reviews_pack.md",
+      "terms": ["отзыв", "отзывы", "клиенты говорят", "доверие", "социальное доказательство", "яндекс"],
+      "source_hints": ["reviews.md", "site_pages.md", "allowed_claims.md"]
+    },
+    "signal_examples_pack": {
+      "source": "answer_packs/signal_examples_pack.md",
+      "terms": ["пример", "примеры", "сигнал", "сигналы", "как выглядит", "покажите", "показать", "что получает"],
+      "source_hints": ["examples/signal_examples.md", "service_scenarios.md", "site_pages.md"]
+    },
+    "services_pack": {
+      "source": "answer_packs/services_pack.md",
+      "terms": ["услуги", "сценарии", "b2b", "b2c", "б2б", "б2ц", "мониторинг", "репутация", "конкуренты", "рынок", "тренды", "отдел продаж", "crm", "црм", "api", "webhook", "интеграция", "автоматизация", "автоматическое общение", "fact-checking", "фактчекинг", "сми", "telegram-crm", "телеграм-crm", "рабочий чат", "таблица", "передавать сигналы"],
+      "source_hints": ["service_scenarios.md", "product_overview.md", "offer.md"]
+    },
+    "sector_fit_pack": {
+      "source": "answer_packs/sector_fit_pack.md",
+      "terms": ["подходит", "ниша", "сфера", "отрасль", "авто", "китай", "вед", "логистика", "банкротство", "визы", "медицина", "клиника", "недвижимость", "crm", "црм", "1с", "туризм", "маркетинг", "открытые источники", "закрытые источники"],
+      "source_hints": ["service_scenarios.md", "allowed_claims.md"]
+    },
+    "partner_program_pack": {
+      "source": "answer_packs/partner_program_pack.md",
+      "terms": ["партнер", "партнёр", "реферал", "реферальная", "рекомендовать", "комиссия", "выплата", "агентство", "бывший клиент", "действующий клиент", "реанимировать"],
+      "source_hints": ["partner_program.md", "pricing_policy.md", "site_pages.md"]
+    },
+    "legal_sensitive_pack": {
+      "source": "answer_packs/legal_sensitive_pack.md",
+      "terms": ["договор", "счет", "счёт", "оплата", "персональные данные", "юридический", "медицинский", "визовый", "таможенный", "финансовый", "консультация", "compliance", "доступ", "запуск теста", "документы"],
+      "source_hints": ["site_pages.md", "pricing_policy.md", "compliance_notes.md", "forbidden_claims.md"]
+    }
+  }
+}

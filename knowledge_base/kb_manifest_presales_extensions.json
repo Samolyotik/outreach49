@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "updated_at": "2026-07-25",
+  "description": "Presales KB extension: answer cards, fact registry, ontology and few-shot context.",
+  "sources": {
+    "fact_registry.md": {
+      "topic": ["facts", "guardrails"],
+      "intent": ["faq_question", "pricing_question", "demo_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/fact_registry.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 30,
+      "priority": 97,
+      "recommended_for_presales": true,
+      "tags": ["fact_id", "тарифы", "кейсы", "roi", "отзывы", "партнерка", "площадки", "закрытые источники", "демо-бот", "тест", "промо", "api", "webhook", "автоматизация", "классификация", "fact-checking", "гарантии", "handoff", "блокировка", "границы услуги"]
+    },
+    "reply_few_shots.md": {
+      "topic": ["few_shots", "style"],
+      "intent": ["faq_question", "pricing_question", "demo_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "reasoning_context",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/reply_few_shots.md",
+      "updated_at": "2026-07-26",
+      "priority": 72,
+      "recommended_for_presales": true,
+      "tags": ["пример ответа", "few-shot", "стиль", "формат"]
+    },
+    "kb_ontology.json": {
+      "topic": ["ontology", "routing"],
+      "intent": ["internal_audit"],
+      "audience": "internal",
+      "usage_type": "source_audit",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/kb_ontology.json",
+      "updated_at": "2026-07-25",
+      "priority": 60,
+      "recommended_for_presales": false,
+      "tags": ["aliases", "routing", "topics"]
+    },
+    "answer_cards/pricing.md": {
+      "topic": ["pricing", "answer_card"],
+      "intent": ["pricing_question", "faq_question"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/pricing.md",
+      "updated_at": "2026-07-26",
+      "freshness_days": 30,
+      "priority": 99,
+      "recommended_for_presales": true,
+      "tags": ["цена", "стоимость", "тариф", "прайс", "счет", "договор", "внедрение", "0 ₽", "акция", "промо"]
+    },
+    "answer_cards/cases.md": {
+      "topic": ["cases", "proof", "answer_card"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/cases.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 60,
+      "priority": 96,
+      "recommended_for_presales": true,
+      "tags": ["кейсы", "результаты", "цифры", "окупаемость", "roi", "юрист", "доставка"]
+    },
+    "answer_cards/reviews.md": {
+      "topic": ["reviews", "proof", "answer_card"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_cards/reviews.md",
+      "updated_at": "2026-07-09",
+      "freshness_days": 60,
+      "priority": 95,
+      "recommended_for_presales": true,
+      "tags": ["отзывы", "клиенты", "доверие"]
+    },
+    "answer_cards/signal_examples.md": {
+      "topic": ["signal_examples", "answer_card"],
+      "intent": ["faq_question", "demo_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_cards/signal_examples.md",
+      "updated_at": "2026-07-09",
+      "freshness_days": 90,
+      "priority": 95,
+      "recommended_for_presales": true,
+      "tags": ["пример", "сигнал", "как выглядит", "покажите"]
+    },
+    "answer_cards/services.md": {
+      "topic": ["services", "answer_card"],
+      "intent": ["faq_question", "unknown_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_cards/services.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 90,
+      "priority": 94,
+      "recommended_for_presales": true,
+      "tags": ["услуги", "сценарии", "лиды", "мониторинг", "сайт", "автоматизация", "api", "webhook", "crm", "fact-checking", "сми", "не наша услуга"]
+    },
+    "answer_cards/sector_fit.md": {
+      "topic": ["sector_fit", "answer_card"],
+      "intent": ["faq_question", "unknown_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reasoning_context",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/sector_fit.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 90,
+      "priority": 94,
+      "recommended_for_presales": true,
+      "tags": ["ниша", "сфера", "подходит", "отрасль", "медицина", "авто", "crm", "1с", "открытые источники", "закрытые источники"]
+    },
+    "answer_cards/partner_program.md": {
+      "topic": ["partner_program", "answer_card"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/partner_program.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 60,
+      "priority": 93,
+      "recommended_for_presales": true,
+      "tags": ["партнер", "партнёр", "реферал", "комиссия", "выплаты", "бывший клиент", "действующий клиент", "реанимация"]
+    },
+    "answer_cards/legal_sensitive.md": {
+      "topic": ["legal_sensitive", "handoff", "answer_card"],
+      "intent": ["faq_question", "pricing_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "handoff_rule",
+      "risk": "high",
+      "source_url": "repo:knowledge_base/answer_cards/legal_sensitive.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 30,
+      "priority": 99,
+      "recommended_for_presales": true,
+      "tags": ["договор", "счет", "счёт", "оплата", "персональные данные", "консультация", "медицинский", "юридический", "доступ"]
+    },
+    "answer_cards/guarantees.md": {
+      "topic": ["guarantees", "safety", "answer_card"],
+      "intent": ["faq_question", "pricing_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "safety_rule",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/guarantees.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 60,
+      "priority": 98,
+      "recommended_for_presales": true,
+      "tags": ["гарантии", "лиды", "roi", "cpl", "окупаемость", "продажи", "фиксированный объем", "блокировка", "юридические последствия", "безопасность"]
+    },
+    "answer_cards/outreach_surfaces.md": {
+      "topic": ["outreach_surfaces", "product", "answer_card"],
+      "intent": ["faq_question", "unknown_question", "positive"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/outreach_surfaces.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 60,
+      "priority": 97,
+      "recommended_for_presales": true,
+      "tags": ["каналы", "чаты", "личка", "direct messages", "источники", "открытые источники", "закрытые источники", "outreach", "telegram", "вконтакте", "max"]
+    },
+    "answer_cards/contact_source.md": {
+      "topic": ["contact_source", "consent", "answer_card"],
+      "intent": ["faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "medium",
+      "source_url": "repo:knowledge_base/answer_cards/contact_source.md",
+      "updated_at": "2026-07-25",
+      "freshness_days": 60,
+      "priority": 98,
+      "recommended_for_presales": true,
+      "tags": ["контакт", "согласие", "источник контакта", "почему пишете", "opt-out"]
+    },
+    "answer_cards/company_identity.md": {
+      "topic": ["company", "answer_card"],
+      "intent": ["greeting", "faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_cards/company_identity.md",
+      "updated_at": "2026-07-09",
+      "freshness_days": 90,
+      "priority": 91,
+      "recommended_for_presales": true,
+      "tags": ["кто вы", "компания", "сайт", "tg radar", "telegram", "вконтакте", "max"]
+    },
+    "answer_cards/blog.md": {
+      "topic": ["blog", "answer_card"],
+      "intent": ["faq_question", "unknown_question"],
+      "audience": "customer_llm",
+      "usage_type": "reply_fact",
+      "risk": "low",
+      "source_url": "repo:knowledge_base/answer_cards/blog.md",
+      "updated_at": "2026-07-09",
+      "freshness_days": 90,
+      "priority": 80,
+      "recommended_for_presales": true,
+      "tags": ["блог", "статьи", "почитать", "материалы"]
+    }
+  },
+  "answer_cards": {
+    "pricing": {
+      "source": "answer_cards/pricing.md",
+      "terms": ["цена", "цену", "стоимость", "стоит", "тариф", "прайс", "оплата", "счет", "счёт", "договор", "внедрение", "0 ₽", "акция", "промо", "price", "pricing", "cost"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "pricing_policy.md", "site_pages.md", "free_test.md"]
+    },
+    "cases": {
+      "source": "answer_cards/cases.md",
+      "terms": ["кейс", "кейсы", "результат", "результаты", "цифры", "получалось", "roi", "окупаемость"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "case_studies.md", "site_pages.md", "allowed_claims.md"]
+    },
+    "reviews": {
+      "source": "answer_cards/reviews.md",
+      "terms": ["отзыв", "отзывы", "клиенты говорят", "доверие", "социальное доказательство", "яндекс"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "reviews.md", "site_pages.md"]
+    },
+    "signal_examples": {
+      "source": "answer_cards/signal_examples.md",
+      "terms": ["пример", "примеры", "сигнал", "сигналы", "как выглядит", "покажите", "показать", "что получает"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "examples/signal_examples.md", "site_pages.md"]
+    },
+    "services": {
+      "source": "answer_cards/services.md",
+      "terms": ["услуги", "сценарии", "b2b", "b2c", "б2б", "б2ц", "мониторинг", "репутация", "конкуренты", "рынок", "тренды", "отдел продаж", "crm", "црм", "api", "webhook", "интеграция", "автоматизация", "автоматическое общение", "fact-checking", "фактчекинг", "сми", "telegram-crm", "телеграм-crm", "рабочий чат", "таблица", "передавать сигналы", "запустить сайт", "запуск сайта", "автоматизация заказов", "автоматизировать заказы"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "service_scenarios.md", "product_overview.md", "offer.md"]
+    },
+    "sector_fit": {
+      "source": "answer_cards/sector_fit.md",
+      "terms": ["подходит", "подойдёт", "ниша", "сфера", "отрасль", "агентство", "агентства", "авто", "китай", "вед", "логистика", "банкротство", "визы", "медицина", "клиника", "недвижимость", "crm", "црм", "1с", "туризм", "маркетинг", "открытые источники", "закрытые источники"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "service_scenarios.md", "allowed_claims.md"]
+    },
+    "partner_program": {
+      "source": "answer_cards/partner_program.md",
+      "terms": ["партнер", "партнёр", "партнерка", "партнёрка", "реферал", "реферальная", "рекомендовать", "комиссия", "выплата", "приводить клиентов", "бывший клиент", "действующий клиент", "реанимировать"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "partner_program.md", "pricing_policy.md", "site_pages.md"]
+    },
+    "legal_sensitive": {
+      "source": "answer_cards/legal_sensitive.md",
+      "terms": ["договор", "счет", "счёт", "оплата", "персональные данные", "юридический", "медицинский", "визовый", "таможенный", "финансовый", "консультация", "compliance", "комплаенс", "доступ", "запуск теста", "документы"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "site_pages.md", "pricing_policy.md"]
+    },
+    "guarantees": {
+      "source": "answer_cards/guarantees.md",
+      "terms": ["гарантия", "гарантии", "гарантируете", "гарантировать", "сколько лидов", "лидов в месяц", "roi", "cpl", "cac", "окупаемость", "окупится", "продажи", "точно получите", "блокировка", "заблокируют", "заблокируют канал", "заблокируют группу", "юридические последствия"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "allowed_claims.md", "forbidden_claims.md", "free_test.md"]
+    },
+    "outreach_surfaces": {
+      "source": "answer_cards/outreach_surfaces.md",
+      "terms": ["людям или каналам", "людям", "каналам", "каналы", "чаты", "личку", "личные сообщения", "direct messages", "dm каналов", "источники outreach", "публичные обсуждения", "открытые источники", "закрытые источники", "telegram", "вконтакте", "vk", "max", "outreach"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "product_overview.md", "service_scenarios.md", "allowed_claims.md", "forbidden_claims.md"]
+    },
+    "contact_source": {
+      "source": "answer_cards/contact_source.md",
+      "terms": ["contact_source", "источник контакта", "контакт", "согласие", "откуда у вас мой контакт", "откуда мой контакт", "где взяли мой контакт", "где взяли мой номер", "я давал согласие", "почему написали", "не хочу продолжать диалог"],
+      "source_hints": ["fact_registry.md", "reply_few_shots.md", "company_profile.md", "allowed_claims.md", "forbidden_claims.md"]
+    },
+    "company_identity": {
+      "source": "answer_cards/company_identity.md",
+      "terms": ["кто вы", "от какой компании", "что за компания", "официальный сайт", "какая компания"],
+      "source_hints": ["fact_registry.md", "company_profile.md", "site_pages.md", "product_overview.md"]
+    },
+    "blog": {
+      "source": "answer_cards/blog.md",
+      "terms": ["блог", "статьи", "почитать", "материалы", "где почитать"],
+      "source_hints": ["blog_content.md", "site_pages.md"]
+    }
+  }
+}
