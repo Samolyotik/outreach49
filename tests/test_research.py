@@ -625,6 +625,43 @@ class ResultTableTests(unittest.TestCase):
         self.assertEqual(line["tg_id"], 2338882588)
         self.assertEqual(line["username"], "auto_eu1")
 
+    def test_a_paid_channel_reads_as_paid_not_as_a_refusal(self):
+        """`resolve_channel_dm_target` отвергает платную цель до отправки.
+
+        Общий «отказ» терял бы это среди мёртвых имён и приватных групп, а
+        платность — единственный отказ, который может измениться обратно.
+        """
+        line = research.row({
+            "action": "check_channel_dm_metadata", "state": "failed",
+            "target": "paidchannel", "error_code": "paid_messages_required",
+            "result": {},
+        })
+
+        self.assertEqual(line["verdict"], "платный")
+
+    def test_stars_outrank_a_permissive_decision(self):
+        """Чат, куда можно писать за звёзды, для рассылки закрыт."""
+        line = research.row({
+            "action": "check_public_chat_metadata", "state": "done",
+            "result": envelope({
+                "decision": "eligible", "structurally_writable": True,
+                "chat": {"username": "x", "paid_message_stars": 15},
+            }),
+        })
+
+        self.assertEqual(line["verdict"], "платный")
+
+    def test_zero_stars_is_not_paid(self):
+        line = research.row({
+            "action": "check_public_chat_metadata", "state": "done",
+            "result": envelope({
+                "decision": "eligible",
+                "chat": {"username": "x", "paid_message_stars": 0},
+            }),
+        })
+
+        self.assertEqual(line["verdict"], "можно писать")
+
     def test_summary_counts_verdicts(self):
         counts = research.summary([
             {"verdict": "есть личка"}, {"verdict": "есть личка"},

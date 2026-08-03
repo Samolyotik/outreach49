@@ -85,10 +85,31 @@ def _chat_kind(chat: dict) -> str | None:
     return entity or None
 
 
+#: Отказы моста, у которых своё внятное имя. Платность канала приезжает
+#: именно так: `resolve_channel_dm_target` отвергает цель до всякой отправки,
+#: и в общем «отказе» это терялось бы среди мёртвых имён и приватных групп.
+ERROR_VERDICTS = {
+    "paid_messages_required": "платный",
+    "paid_status_unavailable": "платность неизвестна",
+    "paid_status_invalid": "платность неизвестна",
+}
+
+
 def _verdict(action: str, state: str, result: dict, error: str | None) -> str:
     """Одно слово о том, что это чтение выяснило."""
+    if error and str(error) in ERROR_VERDICTS:
+        return ERROR_VERDICTS[str(error)]
     if state != "done":
         return "отказ" if state in ("failed", "blocked") else state
+
+    # Платность старше остальных вердиктов: чат, куда «можно писать» за
+    # звёзды, для рассылки закрыт ровно так же, как запрещающий отправку.
+    stars = result.get("paid_message_stars")
+    if stars is None:
+        stars = (result.get("chat") or {}).get("paid_message_stars")
+    if stars:
+        return "платный"
+
     availability = result.get("availability")
     if availability:
         return "есть личка" if availability == "available" else str(availability)
