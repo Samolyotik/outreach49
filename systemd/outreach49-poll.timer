@@ -1,10 +1,12 @@
 [Unit]
-Description=outreach49 poll каждые 2 минуты
+Description=outreach49 poll каждые 15 секунд
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
-AccuracySec=15s
+OnBootSec=15s
+OnUnitActiveSec=15s
+# Шаг мельче самого интервала: с прежним AccuracySec=15s systemd вправе
+# растянуть срабатывание на весь интервал и превратить 15 секунд в декорацию.
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
