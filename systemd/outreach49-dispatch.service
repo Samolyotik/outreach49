@@ -1,0 +1,14 @@
+[Unit]
+Description=outreach49 — выпустить созревшие задачи
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Без файла var/ARMED это просто предпросмотр в журнал.
+ExecStart=/opt/outreach49/bin/bridge49 dispatch --confirm
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

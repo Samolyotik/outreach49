@@ -59,8 +59,8 @@ cd /opt/bridge49 && bin/bridge49 accounts --sync accounts.json
 | раз в сутки | `accounts --sync accounts.json` | освежать реестр |
 
 ```bash
-systemctl enable --now bridge49-poll.timer
-systemctl enable --now bridge49-dispatch.timer
+systemctl enable --now outreach49-poll.timer
+systemctl enable --now outreach49-dispatch.timer
 ```
 
 ⚠️ Таймер `dispatch` имеет смысл включать только после `arm on`. Без файла
@@ -179,7 +179,7 @@ bin/bridge49 poll results
 ## Удаление
 
 ```bash
-systemctl disable --now bridge49-poll.timer bridge49-dispatch.timer
+systemctl disable --now outreach49-poll.timer outreach49-dispatch.timer
 rm -rf /opt/bridge49
 ```
 

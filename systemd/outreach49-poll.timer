@@ -1,5 +1,5 @@
 [Unit]
-Description=bridge49 poll каждые 2 минуты
+Description=outreach49 poll каждые 2 минуты
 
 [Timer]
 OnBootSec=2min

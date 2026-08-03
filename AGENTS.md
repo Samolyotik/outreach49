@@ -349,8 +349,8 @@ systemctl stop 'tgradar-outreach-gateway@*'
 systemctl disable --now tgradar-outreach-*.timer
 
 # 3. включить наш
-systemctl enable --now bridge49-poll.timer
-systemctl enable --now bridge49-dispatch.timer   # только после arm on
+systemctl enable --now outreach49-poll.timer
+systemctl enable --now outreach49-dispatch.timer   # только после arm on
 ```
 
 Шаг 2 останавливает 19 живых Telegram-сессий. **Это решение владельца, не

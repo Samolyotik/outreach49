@@ -1,5 +1,5 @@
 [Unit]
-Description=bridge49 dispatch каждые 5 минут
+Description=outreach49 dispatch каждые 5 минут
 
 [Timer]
 OnBootSec=5min

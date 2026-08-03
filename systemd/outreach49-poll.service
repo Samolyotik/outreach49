@@ -1,0 +1,10 @@
+[Unit]
+Description=outreach49 — забрать результаты команд и входящие
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+ExecStart=/opt/outreach49/bin/bridge49 poll
+TimeoutStartSec=300
