@@ -112,6 +112,117 @@ def ensure_contact(store: Store, thread: dict, inbound: dict) -> str:
     return str(contact["id"])
 
 
+#: Точечная отправка по адресату. Роли разные: monoforum канала пишет только
+#: channel_sender, личное сообщение — только dm_sender. Это политика Radar, а
+#: не наша: он проверит её заново перед исполнением.
+SEND_ACTIONS = {"channel_dm": "send_channel_dm", "user": "send_private_dm"}
+
+#: Служебная кампания для точечных отправок вне сегментов.
+SEND_CAMPAIGN_ID = "manual_sends"
+SEND_CAMPAIGN_NAME = "Точечные отправки"
+
+
+def ensure_send_campaign(store: Store, action: str) -> str:
+    """Служебная кампания под точечные отправки конкретным получателям."""
+    campaign_id = f"{SEND_CAMPAIGN_ID}_{action}"
+    if store.one("SELECT id FROM campaigns WHERE id = ?", (campaign_id,)) is None:
+        store.execute(
+            "INSERT INTO campaigns(id, name, action, template_id, segment, mode, "
+            "status, daily_cap, per_account_daily_cap, params, "
+            "allow_repeat_contacts, ttl_hours, note, created_at, updated_at) "
+            "VALUES(?,?,?,NULL,'','lottery','active',999,99,'{}',1,48,?,?,?)",
+            (campaign_id, f"{SEND_CAMPAIGN_NAME}: {action}", action,
+             "служебная: точечные отправки", now(), now()),
+        )
+    return campaign_id
+
+
+def queue_send(
+    store: Store,
+    *,
+    account_id: int,
+    text: str,
+    username: str | None = None,
+    tg_id: int | None = None,
+    channel_tg_id: int | None = None,
+    monoforum_tg_id: int | None = None,
+    kind: str = "user",
+    contact_id: str | None = None,
+    mode: str = "lottery",
+    idempotency: str | None = None,
+    actor: str = "cli",
+) -> dict[str, Any]:
+    """Поставить одно сообщение конкретному получателю с конкретного аккаунта.
+
+    Нужна там, где кампания не подходит: у каждого получателя свой текст —
+    например персональная ссылка на тест. Разворачивать ради этого кампанию с
+    сегментом на одного человека было бы притворством.
+    """
+    from . import entities
+
+    message = (text or "").strip()
+    if not message:
+        raise ReplyError("пустой текст")
+    if kind not in SEND_ACTIONS:
+        raise ReplyError(f"неизвестный тип получателя: {kind}")
+    action = SEND_ACTIONS[kind]
+    if kind == "channel_dm" and not username:
+        raise ReplyError("для monoforum канала нужен username канала")
+    if kind == "user" and not (username or tg_id):
+        raise ReplyError("нужен username или tg_id получателя")
+
+    if contact_id is None:
+        contact = entities.add_contact(
+            store,
+            username=username,
+            tg_id=int(tg_id) if tg_id else None,
+            kind="channel" if kind == "channel_dm" else "user",
+            segment="manual_send",
+            display_name=username or (f"id:{tg_id}" if tg_id else None),
+            note="заведён при точечной отправке",
+            actor=actor,
+        )
+        contact_id = str(contact["id"])
+
+    campaign_id = ensure_send_campaign(store, action)
+
+    # Один и тот же ключ не ставит вторую задачу: пакетную выдачу ссылок
+    # можно перезапускать, не рискуя отправить человеку два сообщения.
+    marker = idempotency or f"{account_id}:{username or tg_id}"
+    if store.one(
+        "SELECT id FROM tasks WHERE campaign_id = ? AND contact_id = ? "
+        "AND state IN ('planned', 'queued', 'done')",
+        (campaign_id, contact_id),
+    ) is not None:
+        raise ReplyError(f"этому получателю уже поставлена отправка ({marker})")
+
+    params: dict[str, Any] = {"text": message}
+    if username:
+        params["username"] = str(username).lstrip("@")
+    if kind == "user" and tg_id:
+        params["target_user_tg_id"] = int(tg_id)
+    if kind == "channel_dm":
+        if channel_tg_id:
+            params["target_channel_tg_id"] = int(channel_tg_id)
+        if monoforum_tg_id:
+            params["target_monoforum_tg_id"] = int(monoforum_tg_id)
+
+    task_id = new_id("task")
+    store.execute(
+        "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+        "params, mode, scheduled_at, expires_at, state, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,NULL,'planned',?,?)",
+        (task_id, campaign_id, contact_id, int(account_id), action,
+         dumps(params), mode, now(), now(), now()),
+    )
+    store.log(actor, "send.queue", task_id, f"acc={account_id} {marker}")
+    store.commit()
+    return {
+        "task": task_id, "account_id": int(account_id), "action": action,
+        "peer": username or f"id:{tg_id}", "contact_id": contact_id, "mode": mode,
+    }
+
+
 def queue_reply(
     store: Store,
     *,

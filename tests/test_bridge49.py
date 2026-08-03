@@ -1735,6 +1735,66 @@ class AlertDeliveryTests(unittest.TestCase):
         self.assertEqual(self.sent, [])
 
 
+class SendTests(unittest.TestCase):
+    """Точечная отправка: у каждого получателя свой текст, кампании нет."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        limits = self.settings.limits
+        limits.per_account_visible_interval_sec = 0
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_private_send_carries_its_own_text(self):
+        result = replies.queue_send(
+            self.store, account_id=821, text="персональная ссылка", username="lead"
+        )
+        task = self.store.one(
+            "SELECT action, params FROM tasks WHERE id = ?", (result["task"],)
+        )
+        self.assertEqual(task["action"], "send_private_dm")
+        self.assertEqual(json.loads(task["params"])["text"], "персональная ссылка")
+
+    def test_channel_send_keeps_both_route_ids(self):
+        result = replies.queue_send(
+            self.store, account_id=821, text="ссылка", username="autoimport27",
+            kind="channel_dm", channel_tg_id=-1001763001372,
+            monoforum_tg_id=-2071763001372,
+        )
+        params = json.loads(self.store.one(
+            "SELECT params FROM tasks WHERE id = ?", (result["task"],)
+        )["params"])
+        self.assertEqual(params["target_channel_tg_id"], -1001763001372)
+        self.assertEqual(params["target_monoforum_tg_id"], -2071763001372)
+
+    def test_repeat_does_not_queue_a_second_message(self):
+        replies.queue_send(self.store, account_id=821, text="раз", username="lead")
+        with self.assertRaises(replies.ReplyError):
+            replies.queue_send(self.store, account_id=821, text="два", username="lead")
+
+    def test_channel_send_needs_a_username(self):
+        with self.assertRaises(replies.ReplyError):
+            replies.queue_send(
+                self.store, account_id=821, text="т", kind="channel_dm",
+                monoforum_tg_id=-2071763001372,
+            )
+
+    def test_send_goes_through_the_usual_gates(self):
+        self.settings.limits.send_weekdays = ()
+        replies.queue_send(self.store, account_id=821, text="ссылка", username="lead")
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(bridge.calls, [])
+
+
 class ReplyTests(unittest.TestCase):
     """Ответ адресуется входящему, а не username, и слушается тех же ворот."""
 

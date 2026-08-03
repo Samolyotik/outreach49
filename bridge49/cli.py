@@ -627,6 +627,27 @@ def cmd_reply(args) -> int:
     return 0
 
 
+def cmd_send(args) -> int:
+    """Точечная отправка конкретному получателю — вне кампаний и сегментов."""
+    settings = _settings(args)
+    with _store(settings) as store:
+        try:
+            result = replies.queue_send(
+                store, account_id=args.account, text=args.text,
+                username=args.peer, tg_id=args.tg_id,
+                channel_tg_id=args.channel_tg_id,
+                monoforum_tg_id=args.monoforum_tg_id,
+                kind=args.kind, mode=args.mode, actor=args.actor,
+            )
+        except replies.ReplyError as exc:
+            print(report.bad(str(exc)))
+            return 1
+    print(report.kv(sorted(result.items())))
+    if not settings.armed:
+        print(report.warn("боевой режим выключен — поставлено в очередь, но не уйдёт"))
+    return 0
+
+
 def cmd_threads(args) -> int:
     settings = _settings(args)
     with _store(settings) as store:
@@ -935,6 +956,17 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=("all", "results", "inbound"))
     p.add_argument("--limit", type=int, default=500)
     p.set_defaults(func=cmd_poll)
+
+    p = sub.add_parser("send", help="точечно отправить сообщение получателю")
+    p.add_argument("--account", type=int, required=True, help="с какого аккаунта")
+    p.add_argument("--peer", help="username получателя или канала")
+    p.add_argument("--tg-id", type=int, dest="tg_id", help="или числовой id")
+    p.add_argument("--kind", default="user", choices=("user", "channel_dm"))
+    p.add_argument("--channel-tg-id", type=int, dest="channel_tg_id")
+    p.add_argument("--monoforum-tg-id", type=int, dest="monoforum_tg_id")
+    p.add_argument("--text", required=True)
+    p.add_argument("--mode", default="lottery", choices=("lottery", "immediate"))
+    p.set_defaults(func=cmd_send)
 
     p = sub.add_parser("reply", help="ответить в диалог")
     p.add_argument("--thread", help="id диалога (см. threads)")
