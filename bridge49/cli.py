@@ -965,7 +965,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--channel-tg-id", type=int, dest="channel_tg_id")
     p.add_argument("--monoforum-tg-id", type=int, dest="monoforum_tg_id")
     p.add_argument("--text", required=True)
-    p.add_argument("--mode", default="lottery", choices=("lottery", "immediate"))
+    # immediate — единственный работающий режим: lottery ждёт розыгрыша,
+    # которого в этом бизнесе не настроено, и команда зависает в new.
+    p.add_argument("--mode", default="immediate", choices=("lottery", "immediate"))
     p.set_defaults(func=cmd_send)
 
     p = sub.add_parser("reply", help="ответить в диалог")
@@ -973,7 +975,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--account", type=int, help="или пара: аккаунт …")
     p.add_argument("--peer", help="… и собеседник (@username или id:123)")
     p.add_argument("--text", required=True, help="текст ответа")
-    p.add_argument("--mode", default="lottery", choices=("lottery", "immediate"))
+    p.add_argument("--mode", default="immediate", choices=("lottery", "immediate"))
     p.set_defaults(func=cmd_reply)
 
     p = sub.add_parser("threads", help="диалоги")

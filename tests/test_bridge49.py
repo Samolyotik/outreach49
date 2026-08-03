@@ -1796,6 +1796,19 @@ class SendTests(unittest.TestCase):
                 monoforum_tg_id=-2071763001372,
             )
 
+    def test_default_mode_is_immediate(self):
+        # lottery ждёт розыгрыша события outreach_command, которого нет ни у
+        # одного аккаунта: такая команда остаётся в Radar со статусом new
+        # навсегда. Прежний контур все отправки делал только immediate.
+        result = replies.queue_send(
+            self.store, account_id=821, text="ссылка", username="lead"
+        )
+        self.assertEqual(result["mode"], "immediate")
+        task = self.store.one(
+            "SELECT mode FROM tasks WHERE id = ?", (result["task"],)
+        )
+        self.assertEqual(task["mode"], "immediate")
+
     def test_send_goes_through_the_usual_gates(self):
         self.settings.limits.send_weekdays = ()
         replies.queue_send(self.store, account_id=821, text="ссылка", username="lead")

@@ -1,5 +1,12 @@
 """Ответ в существующий диалог.
 
+Режим по умолчанию — ``immediate``. Это не «побыстрее», а единственный
+работающий путь: ``lottery`` ждёт розыгрыша события ``outreach_command``,
+которого нет ни у одного аккаунта, и такая команда остаётся в ``new``
+навсегда. Прежний контур все свои отправки делал только ``immediate``.
+Темп это не ослабляет — окно, дневной лимит и паузы проверяются у нас, до
+обращения к Radar.
+
 Рассылка и ответ — разные вещи, хотя обе доходят до Telegram одинаково.
 Рассылка идёт по сегменту и планируется заранее; ответ адресуется одному
 человеку, который уже написал нам и ждёт. Поэтому ответ не проходит через
@@ -148,7 +155,7 @@ def queue_send(
     monoforum_tg_id: int | None = None,
     kind: str = "user",
     contact_id: str | None = None,
-    mode: str = "lottery",
+    mode: str = "immediate",
     idempotency: str | None = None,
     actor: str = "cli",
 ) -> dict[str, Any]:
@@ -230,7 +237,7 @@ def queue_reply(
     thread_id: str | None = None,
     account_id: int | None = None,
     peer: str | None = None,
-    mode: str = "lottery",
+    mode: str = "immediate",
     actor: str = "cli",
 ) -> dict[str, Any]:
     """Поставить ответ в очередь. Ничего никуда не отправляет.
