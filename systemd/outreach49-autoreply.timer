@@ -1,10 +1,14 @@
 [Unit]
-Description=outreach49 autoreply каждую минуту
+Description=outreach49 autoreply каждые 20 секунд
 
 [Timer]
-OnBootSec=60s
-OnUnitActiveSec=60s
-AccuracySec=5s
+# Шаг мелкий не ради разбора, а ради выпуска: ответ ставится с паузой на
+# чтение (10–30 с) и в том же проходе ещё не созрел. При шаге в минуту он
+# уходил бы через полторы, а это уже не ответ, а запоздалое эхо.
+# Пустой проход дешёвый: без входящих модель не вызывается вовсе.
+OnBootSec=20s
+OnUnitActiveSec=20s
+AccuracySec=2s
 
 [Install]
 WantedBy=timers.target

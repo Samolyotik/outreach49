@@ -517,8 +517,8 @@ def cmd_dispatch(args) -> int:
 
 
 def cmd_autoreply(args) -> int:
-    """Разобрать входящие движком и поставить ответы в очередь."""
-    settings = _settings(args)
+    """Разобрать входящие движком, поставить ответы и сразу их выпустить."""
+    settings = _settings(args, need_dsn=(args.state == "run" and not args.hold))
 
     if args.state in ("on", "off"):
         settings.autoreply_file.parent.mkdir(parents=True, exist_ok=True)
@@ -564,10 +564,33 @@ def cmd_autoreply(args) -> int:
         result = autoreply.run(store, settings, limit=args.limit,
                                actor=args.actor)
 
+        # Ответ, пролежавший в очереди до следующего разбора, — уже не ответ.
+        # Поэтому сразу после разбора выпускаем созревшее, но только по своей
+        # кампании: рассылка остаётся на ручном управлении, и автоответы её
+        # очередь не трогают.
+        sent = 0
+        if not args.hold and settings.armed:
+            try:
+                released = asyncio.run(dispatcher.dispatch(
+                    store, settings,
+                    campaign_id=replies.AUTO_CAMPAIGN_ID,
+                    confirm=True, actor=args.actor,
+                ))
+                sent = int(released.get("dispatched") or 0)
+            except dispatcher.DispatchBusy as exc:
+                print(report.warn(str(exc)))
+            except dispatcher.DispatchBlocked as exc:
+                print(report.warn(f"выпуск придержан: {exc}"))
+        result["sent"] = sent
+
     print(report.kv(sorted(result.items())))
     if result.get("queued") and not settings.armed:
         print(report.warn(
             "боевой режим выключен — ответы поставлены, но не уйдут"
+        ))
+    if args.hold and result.get("queued"):
+        print(report.warn(
+            "выпуск отложен по --hold: ответы ждут `bridge49 dispatch --confirm`"
         ))
     return 0
 
@@ -1013,6 +1036,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run — разобрать входящие; review — что помечено "
                         "на перечитывание")
     p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--hold", action="store_true",
+                   help="только поставить в очередь, не выпускать")
     p.set_defaults(func=cmd_autoreply)
 
     p = sub.add_parser("poll", help="забрать результаты и входящие")
