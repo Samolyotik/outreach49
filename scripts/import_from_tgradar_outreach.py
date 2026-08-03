@@ -452,13 +452,21 @@ def main() -> int:
 
     account_map: dict[str, int] = {}
     if args.accounts:
+        raw_map = json.loads(Path(args.accounts).read_text(encoding="utf-8"))
+        # Ключи с подчёркиванием — комментарии, null — «аккаунт ещё не заведён».
+        # И то и другое встречается в шаблоне карты, падать на них незачем.
         account_map = {
             str(key): int(value)
-            for key, value in json.loads(
-                Path(args.accounts).read_text(encoding="utf-8")
-            ).items()
+            for key, value in raw_map.items()
+            if not str(key).startswith("_") and value is not None
         }
+        pending = [
+            str(key) for key, value in raw_map.items()
+            if not str(key).startswith("_") and value is None
+        ]
         print(f"карта аккаунтов: {len(account_map)} гейтвеев")
+        if pending:
+            print(f"  без нашего id пока: {', '.join(sorted(pending))}")
     else:
         print("⚠️  карта аккаунтов не задана — все диалоги лягут на "
               f"LEGACY_ACCOUNT={LEGACY_ACCOUNT} одной кучей")

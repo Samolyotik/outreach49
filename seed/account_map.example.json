@@ -1,0 +1,27 @@
+{
+  "_комментарий": [
+    "Карта «гейтвей коллеги → наш Account.id в Radar» для --accounts.",
+    "13 пишущих гейтвеев; читающие (source_reader_001..005, source_finder_001)",
+    "переписки за собой не тянут и в карте не нужны.",
+    "Проставить id после того, как аккаунт заведён в Radar. Ключи с null",
+    "импорт пропустит и напечатает как неотображённые.",
+    "dm_sender_001 и dm_sender_004 у коллеги в auth_deferred — добавить сюда,",
+    "только если владелец подтвердит, что они тоже переезжают (28 диалогов)."
+  ],
+
+  "channel_sender_001": null,
+  "channel_sender_002": null,
+  "channel_sender_003": null,
+  "channel_sender_004": null,
+  "channel_sender_005": null,
+
+  "chat_sender_001": null,
+  "chat_sender_002": null,
+  "chat_sender_003": null,
+  "chat_sender_004": null,
+  "chat_sender_005": null,
+
+  "dm_sender_002": null,
+  "dm_sender_003": null,
+  "dm_sender_005": null
+}
