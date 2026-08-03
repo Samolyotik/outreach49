@@ -97,6 +97,11 @@ class Limits:
     per_account_daily_visible: int = 12
     #: Минимальный интервал между видимыми действиями одного аккаунта, сек.
     per_account_visible_interval_sec: int = 900
+    #: Случайная добавка к интервалу, сек: 0..N поверх минимума. Без неё
+    #: отправки ложатся на ровную сетку 15:00, 15:15, 15:30 — это само по
+    #: себе машинный след. Добавка всегда вверх, чтобы план не проваливался
+    #: под пол, который диспетчер проверяет на выпуске.
+    per_account_visible_jitter_sec: int = 420
     #: Сколько всего видимых действий выпускать за один прогон диспетчера.
     dispatch_batch: int = 25
     #: Часы окна отправки в таймзоне кампании (включительно/исключительно).
@@ -106,6 +111,67 @@ class Limits:
     send_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)
 
 
+#: Жёсткий пол. `limits.json` может делать темп СТРОЖЕ и только строже.
+#:
+#: Это не паранойя, а вывод из инцидента 01.08 на соседнем контуре: там в
+#: limits.json оказались `interval_sec: 0`, окно 00–24 и батч 5000, и вся
+#: рассылка ушла одним залпом. Файл правится руками и агентами, а цена
+#: ошибки — аккаунты, которые греются неделями. Поэтому значения из файла
+#: зажимаются здесь и об этом сообщается в `doctor`.
+HARD_MAX_DAILY_VISIBLE = 40
+HARD_MIN_INTERVAL_SEC = 300
+HARD_MAX_DISPATCH_BATCH = 50
+HARD_WINDOW_START_HOUR = 8
+HARD_WINDOW_END_HOUR = 22
+
+
+def clamp(limits: Limits) -> list[str]:
+    """Зажать лимиты в границы пола. Возвращает список сделанных поправок."""
+    notes: list[str] = []
+
+    def fix(field_name: str, value: int, why: str) -> None:
+        notes.append(f"{field_name}: {getattr(limits, field_name)} → {value} ({why})")
+        setattr(limits, field_name, value)
+
+    daily = int(limits.per_account_daily_visible)
+    if daily > HARD_MAX_DAILY_VISIBLE:
+        fix("per_account_daily_visible", HARD_MAX_DAILY_VISIBLE,
+            f"пол: не больше {HARD_MAX_DAILY_VISIBLE} в сутки на аккаунт")
+    elif daily < 0:
+        fix("per_account_daily_visible", 0, "отрицательный лимит")
+
+    interval = int(limits.per_account_visible_interval_sec)
+    if interval < HARD_MIN_INTERVAL_SEC:
+        fix("per_account_visible_interval_sec", HARD_MIN_INTERVAL_SEC,
+            f"пол: пауза не меньше {HARD_MIN_INTERVAL_SEC} с")
+
+    if int(limits.per_account_visible_jitter_sec) < 0:
+        fix("per_account_visible_jitter_sec", 0, "отрицательный разброс")
+
+    batch = int(limits.dispatch_batch)
+    if batch > HARD_MAX_DISPATCH_BATCH:
+        fix("dispatch_batch", HARD_MAX_DISPATCH_BATCH,
+            f"пол: не больше {HARD_MAX_DISPATCH_BATCH} за прогон")
+    elif batch < 1:
+        fix("dispatch_batch", 1, "пустой батч")
+
+    if int(limits.send_window_start_hour) < HARD_WINDOW_START_HOUR:
+        fix("send_window_start_hour", HARD_WINDOW_START_HOUR,
+            f"пол: окно не раньше {HARD_WINDOW_START_HOUR}:00")
+    if int(limits.send_window_end_hour) > HARD_WINDOW_END_HOUR:
+        fix("send_window_end_hour", HARD_WINDOW_END_HOUR,
+            f"пол: окно не позже {HARD_WINDOW_END_HOUR}:00")
+    if limits.send_window_end_hour <= limits.send_window_start_hour:
+        fix("send_window_end_hour", HARD_WINDOW_END_HOUR, "окно схлопнулось")
+
+    days = tuple(sorted({int(d) for d in limits.send_weekdays if 0 <= int(d) <= 6}))
+    if days != tuple(limits.send_weekdays):
+        notes.append(f"send_weekdays: {tuple(limits.send_weekdays)} → {days}")
+        limits.send_weekdays = days
+
+    return notes
+
+
 @dataclass
 class Settings:
     home: Path
@@ -113,6 +179,8 @@ class Settings:
     dsn: RadarDsn | None
     limits: Limits
     timezone: str = "Europe/Moscow"
+    #: Что пришлось зажать при чтении limits.json. Показывается в `doctor`.
+    limits_notes: list[str] = field(default_factory=list)
 
     @property
     def armed_file(self) -> Path:
@@ -138,6 +206,7 @@ def load(home: Path | str | None = None, *, need_dsn: bool = False) -> Settings:
     var.mkdir(parents=True, exist_ok=True)
 
     limits = Limits()
+    notes: list[str] = []
     limits_path = var / "limits.json"
     if limits_path.exists():
         raw = json.loads(limits_path.read_text(encoding="utf-8"))
@@ -146,6 +215,8 @@ def load(home: Path | str | None = None, *, need_dsn: bool = False) -> Settings:
                 setattr(limits, key, value)
         if isinstance(limits.send_weekdays, list):
             limits.send_weekdays = tuple(limits.send_weekdays)
+        # Файл может только ужесточать темп. Всё, что мягче пола, зажимается.
+        notes = clamp(limits)
 
     dsn = RadarDsn.from_secret_file() if need_dsn else None
     return Settings(
@@ -154,4 +225,5 @@ def load(home: Path | str | None = None, *, need_dsn: bool = False) -> Settings:
         dsn=dsn,
         limits=limits,
         timezone=os.environ.get("BRIDGE49_TZ", "Europe/Moscow"),
+        limits_notes=notes,
     )

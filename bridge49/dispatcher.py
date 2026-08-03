@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import fcntl
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -140,6 +140,29 @@ def visible_sent_today(store: Store, account_id: int) -> int:
     return int(row["n"])
 
 
+def last_visible_dispatch_at(store: Store, account_id: int) -> datetime | None:
+    """Когда аккаунт в последний раз реально выпускал видимое действие.
+
+    Читаем `dispatched_at`, а не `scheduled_at`: пол меряется от факта
+    отправки. Задача, пролежавшая в плане сутки, не даёт аккаунту права
+    отправить две подряд.
+    """
+    placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
+    row = store.one(
+        "SELECT max(dispatched_at) AS last FROM tasks "
+        f"WHERE account_id = ? AND action IN ({placeholders}) "
+        "  AND dispatched_at IS NOT NULL "
+        "  AND state NOT IN ('cancelled', 'blocked')",
+        (int(account_id), *VISIBLE_ACTIONS),
+    )
+    if not row or not row["last"]:
+        return None
+    try:
+        return datetime.fromisoformat(str(row["last"]))
+    except ValueError:
+        return None
+
+
 def inside_send_window(settings: Settings, moment: datetime | None = None) -> bool:
     """Идёт ли сейчас окно отправки в рабочей таймзоне."""
     limits = settings.limits
@@ -161,13 +184,15 @@ def preflight(
     settings: Settings,
     *,
     spent: dict[int, int] | None = None,
+    recent: dict[int, datetime] | None = None,
 ) -> catalog.Action:
     """Все проверки, которые дешевле сделать до обращения к базе.
 
-    ``spent`` нужен только предпросмотру: там ничего не пишется в базу, и без
-    накопительного счётчика лимит выглядел бы замороженным. В боевом цикле
-    счётчик не передают — там после каждой отправки коммитится `dispatched_at`,
-    и запрос к базе сам по себе актуален.
+    ``spent`` и ``recent`` нужны только предпросмотру: там ничего не пишется в
+    базу, и без накопительных счётчиков лимит и пауза выглядели бы
+    замороженными — предпросмотр показал бы весь батч как готовый к выпуску.
+    В боевом цикле их не передают: там после каждой отправки коммитится
+    `dispatched_at`, и запрос к базе сам по себе актуален.
     """
     if task.get("campaign_status") not in (None, "active"):
         raise DispatchBlocked(
@@ -217,6 +242,26 @@ def preflight(
                 f"аккаунт уже выпустил {already} видимых действий за сегодня "
                 f"(лимит {settings.limits.per_account_daily_visible})"
             )
+
+        # Пауза между отправками проверяется здесь, а не только при
+        # планировании. Планировщик раскладывает по слотам, но в базу задачи
+        # попадают и мимо него: повторный plan, вторая кампания на тот же
+        # сегмент, импорт, правка руками. Пол должен держать в любом из этих
+        # случаев, иначе весь пакет уедет одной секундой.
+        interval = int(settings.limits.per_account_visible_interval_sec or 0)
+        if interval > 0:
+            last = last_visible_dispatch_at(store, account_id)
+            simulated = (recent or {}).get(account_id)
+            if simulated is not None and (last is None or simulated > last):
+                last = simulated
+            if last is not None:
+                moment = datetime.now(timezone.utc)
+                wait = int((last + timedelta(seconds=interval) - moment).total_seconds())
+                if wait > 0:
+                    raise DispatchBlocked(
+                        f"аккаунт отправлял меньше {interval} с назад — "
+                        f"ждём ещё {wait} с"
+                    )
 
     return action
 
@@ -283,16 +328,20 @@ def _preview(
     armed: bool, confirmed: bool,
 ) -> dict:
     spent: dict[int, int] = {}
+    recent: dict[int, datetime] = {}
     ready: list[dict] = []
     blocked: list[dict] = []
     for task in _queue(store, campaign_id, limit):
         try:
-            action = preflight(store, task, settings, spent=spent)
+            action = preflight(store, task, settings, spent=spent, recent=recent)
         except DispatchBlocked as exc:
             blocked.append({"task": task["id"], "why": str(exc)})
             continue
         if action.visible:
-            spent[int(task["account_id"])] = spent.get(int(task["account_id"]), 0) + 1
+            account_id = int(task["account_id"])
+            spent[account_id] = spent.get(account_id, 0) + 1
+            # Весь батч ушёл бы одним прогоном, то есть «сейчас».
+            recent[account_id] = datetime.now(timezone.utc)
         ready.append(task)
 
     return {

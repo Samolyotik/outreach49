@@ -114,6 +114,24 @@ def cmd_doctor(args) -> int:
         print(report.bad(f"конфигурация: {exc}"))
         return 1
 
+    # Темп показываем всегда: «что сейчас разрешено» должно быть видно одной
+    # командой, а не вычитываться из limits.json и кода по частям.
+    limits = settings.limits
+    days = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+    print(report.section("темп"))
+    print(report.kv([
+        ("в сутки на аккаунт", limits.per_account_daily_visible),
+        ("пауза между отправками",
+         f"{limits.per_account_visible_interval_sec} с "
+         f"(+ до {limits.per_account_visible_jitter_sec} с разброса)"),
+        ("за один прогон", limits.dispatch_batch),
+        ("окно", f"{limits.send_window_start_hour}:00–"
+                 f"{limits.send_window_end_hour}:00 {settings.timezone}"),
+        ("дни", ", ".join(days[d] for d in limits.send_weekdays) or "—"),
+    ]))
+    for note in settings.limits_notes:
+        print(report.warn(f"limits.json зажат полом → {note}"))
+
     print(report.section("реквизиты моста"))
     try:
         settings = _settings(args, need_dsn=True)

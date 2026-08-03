@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,19 @@ def _tz(name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def _jitter(rng: random.Random, limits: Limits, paced: bool) -> timedelta:
+    """Случайная добавка к слоту — всегда вверх, никогда вниз.
+
+    Вниз нельзя: диспетчер проверяет минимальную паузу на выпуске, и слот,
+    провалившийся под неё, был бы заблокирован и переигран. Вверх — просто
+    убирает ровную сетку 15:00 / 15:15 / 15:30.
+    """
+    span = int(getattr(limits, "per_account_visible_jitter_sec", 0) or 0)
+    if not paced or span <= 0:
+        return timedelta(0)
+    return timedelta(seconds=rng.randint(0, span))
+
+
 def _place(
     account_id: int,
     *,
@@ -36,6 +50,7 @@ def _place(
     limits: Limits,
     tz: ZoneInfo,
     paced: bool,
+    rng: random.Random,
 ) -> tuple[datetime, str] | tuple[None, None]:
     """Найти ближайший слот аккаунта, не превышающий дневной лимит.
 
@@ -43,7 +58,8 @@ def _place(
     вечером, кладёт задачи на завтра, и вчерашний счётчик к ним отношения не
     имеет. Если день уже забит — переходим к следующему.
     """
-    slot = next_slot(max(start, cursor.get(account_id, start)), limits, tz, paced=paced)
+    base = max(start, cursor.get(account_id, start)) + _jitter(rng, limits, paced)
+    slot = next_slot(base, limits, tz, paced=paced)
     for _ in range(30):  # месяц вперёд — дальше искать бессмысленно
         day = slot.date().isoformat()
         if used.get((account_id, day), 0) < cap:
@@ -51,7 +67,13 @@ def _place(
         tomorrow = (slot + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        slot = next_slot(tomorrow, limits, tz, paced=paced)
+        # Разброс нужен и здесь: иначе все аккаунты, перенесённые на
+        # следующий день, стартуют ровно в начало окна одной секундой.
+        slot = next_slot(
+            next_slot(tomorrow, limits, tz, paced=paced)
+            + _jitter(rng, limits, paced),
+            limits, tz, paced=paced,
+        )
     return None, None
 
 
@@ -124,12 +146,17 @@ def plan(
     limit: int | None = None,
     actor: str = "cli",
     dry_run: bool = True,
+    rng: random.Random | None = None,
 ) -> dict:
     """Собрать задачи для кампании.
 
     При `dry_run=True` ничего не пишется — возвращается тот же самый план,
     который был бы сохранён.
+
+    ``rng`` нужен только тестам: с фиксированным зерном разброс слотов
+    воспроизводится.
     """
+    rng = rng or random.Random()
     campaign = entities.get_campaign(store, campaign_id)
     if campaign is None:
         raise PlanError(f"нет кампании {campaign_id}")
@@ -220,7 +247,7 @@ def plan(
         ):
             slot, day = _place(
                 candidate["id"], start=start, cursor=cursor, used=used,
-                cap=per_account_cap, limits=limits, tz=tz, paced=paced,
+                cap=per_account_cap, limits=limits, tz=tz, paced=paced, rng=rng,
             )
             if slot is not None:
                 account = candidate

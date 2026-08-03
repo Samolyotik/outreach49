@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 import sys
 import tempfile
 import unittest
@@ -14,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, dispatcher, entities, planner, pollers, radar  # noqa: E402
+from bridge49 import catalog, config, dispatcher, entities, planner, pollers, radar  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
@@ -576,6 +578,9 @@ class DailyCapTests(unittest.TestCase):
         self.store, self.settings = make_env(Path(self.tmp.name))
         self.settings.limits.per_account_daily_visible = 3
         self.settings.limits.dispatch_batch = 25
+        # Здесь проверяется именно суточный лимит, поэтому паузу между
+        # отправками выключаем — она живёт в PaceFloorTests.
+        self.settings.limits.per_account_visible_interval_sec = 0
         # Окно отправки не должно мешать тесту.
         self.settings.limits.send_window_start_hour = 0
         self.settings.limits.send_window_end_hour = 24
@@ -871,6 +876,219 @@ class AccountRegistryTests(unittest.TestCase):
         first = accounts_mod.sync(self.store, SNAPSHOT)
         self.assertEqual(first["added"], 0)
         self.assertEqual(first["updated"], 2)
+
+
+class PaceFloorTests(unittest.TestCase):
+    """Пауза между отправками держится на ВЫПУСКЕ, а не только в плане.
+
+    Планировщик раскладывает задачи по слотам, но в базу они попадают и мимо
+    него: повторный plan, вторая кампания, импорт, правка руками. Инцидент
+    01.08 на соседнем контуре выглядел ровно так — пакет ушёл одной секундой.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        self.settings.limits.per_account_daily_visible = 12
+        self.settings.limits.per_account_visible_interval_sec = 900
+        self.settings.limits.send_window_start_hour = 0
+        self.settings.limits.send_window_end_hour = 24
+        self.settings.limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        entities.add_template(self.store, "t", "Привет!", template_id="t1")
+        entities.add_campaign(
+            self.store, name="c", action="send_private_dm", template_id="t1",
+            segment="s", campaign_id="pace", per_account_daily_cap=99,
+            daily_cap=99,
+        )
+        entities.set_campaign_status(self.store, "pace", "active")
+        for i in range(4):
+            entities.add_contact(self.store, username=f"lead_pace{i}", segment="s")
+        planner.plan(self.store, "pace", limits=self.settings.limits, dry_run=False)
+        # Все задачи созрели и все на одном аккаунте — как если бы их вставили
+        # мимо планировщика.
+        self.store.execute(
+            "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00', "
+            "account_id = 821"
+        )
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_only_one_goes_out_per_run(self):
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 1)
+        self.assertEqual(len(bridge.calls), 1)
+        self.assertTrue(
+            any("ждём ещё" in b["why"] for b in result["blocked"]),
+            result["blocked"],
+        )
+
+    def test_next_run_is_still_held(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        second = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, second, confirm=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(second.calls, [])
+
+    def test_preview_shows_the_same_single_task(self):
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 1)
+
+    def test_pause_is_measured_per_account(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        self.assertIsNotNone(dispatcher.last_visible_dispatch_at(self.store, 821))
+        self.assertIsNone(dispatcher.last_visible_dispatch_at(self.store, 803))
+
+    def test_zero_interval_disables_the_pause(self):
+        self.settings.limits.per_account_visible_interval_sec = 0
+        result = run_dispatch(self.store, self.settings, FakeEnqueueBridge(),
+                              confirm=True)
+        self.assertEqual(result["dispatched"], 4)
+
+
+class JitterTests(unittest.TestCase):
+    """Слоты не должны ложиться на ровную сетку — и не должны падать под пол."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        self.limits = self.settings.limits
+        self.limits.per_account_visible_interval_sec = 900
+        self.limits.per_account_visible_jitter_sec = 420
+        self.limits.send_window_start_hour = 0
+        self.limits.send_window_end_hour = 24
+        self.limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        entities.add_template(self.store, "t", "Привет!", template_id="t1")
+        entities.add_campaign(
+            self.store, name="c", action="send_private_dm", template_id="t1",
+            segment="s", campaign_id="jit", per_account_daily_cap=12,
+            daily_cap=99,
+        )
+        for i in range(10):
+            entities.add_contact(self.store, username=f"lead_jit{i}", segment="s")
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _gaps(self) -> list[int]:
+        rows = self.store.query(
+            "SELECT scheduled_at FROM tasks WHERE account_id = 821 "
+            "ORDER BY scheduled_at"
+        )
+        moments = [datetime.fromisoformat(r["scheduled_at"]) for r in rows]
+        return [
+            int((b - a).total_seconds()) for a, b in zip(moments, moments[1:])
+        ]
+
+    def test_gaps_never_fall_below_the_dispatch_floor(self):
+        planner.plan(self.store, "jit", limits=self.limits, dry_run=False,
+                     rng=random.Random(1))
+        gaps = self._gaps()
+        self.assertTrue(gaps)
+        for gap in gaps:
+            self.assertGreaterEqual(
+                gap, self.limits.per_account_visible_interval_sec,
+                f"слот провалился под пол: {gap} с",
+            )
+
+    def test_gaps_are_not_a_fixed_grid(self):
+        planner.plan(self.store, "jit", limits=self.limits, dry_run=False,
+                     rng=random.Random(1))
+        self.assertGreater(len(set(self._gaps())), 1, "интервалы одинаковые")
+
+    def test_jitter_never_exceeds_its_span(self):
+        planner.plan(self.store, "jit", limits=self.limits, dry_run=False,
+                     rng=random.Random(7))
+        ceiling = (self.limits.per_account_visible_interval_sec
+                   + self.limits.per_account_visible_jitter_sec)
+        for gap in self._gaps():
+            self.assertLessEqual(gap, ceiling, f"разброс вышел за границу: {gap} с")
+
+    def test_zero_jitter_keeps_the_old_behaviour(self):
+        self.limits.per_account_visible_jitter_sec = 0
+        planner.plan(self.store, "jit", limits=self.limits, dry_run=False,
+                     rng=random.Random(1))
+        self.assertEqual(
+            set(self._gaps()), {self.limits.per_account_visible_interval_sec}
+        )
+
+
+class LimitsFloorTests(unittest.TestCase):
+    """`limits.json` может ужесточать темп, но не смягчать его.
+
+    Значения взяты те самые, что нашлись на соседнем контуре 01.08 — с ними
+    рассылка ушла залпом.
+    """
+
+    LOOSE = {
+        "per_account_daily_visible": 10000,
+        "per_account_visible_interval_sec": 0,
+        "dispatch_batch": 5000,
+        "send_window_start_hour": 0,
+        "send_window_end_hour": 24,
+        "send_weekdays": [0, 1, 2, 3, 4, 5, 6],
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        (self.home / "var").mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _load(self, raw: dict):
+        (self.home / "var" / "limits.json").write_text(
+            json.dumps(raw), encoding="utf-8"
+        )
+        return config.load(self.home)
+
+    def test_loose_file_is_clamped_to_the_floor(self):
+        settings = self._load(self.LOOSE)
+        limits = settings.limits
+        self.assertEqual(limits.per_account_daily_visible,
+                         config.HARD_MAX_DAILY_VISIBLE)
+        self.assertEqual(limits.per_account_visible_interval_sec,
+                         config.HARD_MIN_INTERVAL_SEC)
+        self.assertEqual(limits.dispatch_batch, config.HARD_MAX_DISPATCH_BATCH)
+        self.assertEqual(limits.send_window_start_hour,
+                         config.HARD_WINDOW_START_HOUR)
+        self.assertEqual(limits.send_window_end_hour, config.HARD_WINDOW_END_HOUR)
+
+    def test_clamping_is_reported_not_silent(self):
+        settings = self._load(self.LOOSE)
+        self.assertTrue(settings.limits_notes)
+        joined = " ".join(settings.limits_notes)
+        self.assertIn("per_account_visible_interval_sec", joined)
+
+    def test_stricter_values_pass_through_untouched(self):
+        settings = self._load({
+            "per_account_daily_visible": 4,
+            "per_account_visible_interval_sec": 3600,
+            "dispatch_batch": 5,
+            "send_window_start_hour": 11,
+            "send_window_end_hour": 18,
+            "send_weekdays": [0, 1, 2],
+        })
+        self.assertEqual(settings.limits.per_account_daily_visible, 4)
+        self.assertEqual(settings.limits.per_account_visible_interval_sec, 3600)
+        self.assertEqual(settings.limits.dispatch_batch, 5)
+        self.assertEqual(settings.limits.send_window_start_hour, 11)
+        self.assertEqual(settings.limits.send_weekdays, (0, 1, 2))
+        self.assertEqual(settings.limits_notes, [])
+
+    def test_defaults_without_a_file_are_the_shipped_ones(self):
+        settings = config.load(self.home)
+        self.assertEqual(settings.limits.per_account_daily_visible, 12)
+        self.assertEqual(settings.limits.per_account_visible_interval_sec, 900)
+        self.assertEqual(settings.limits.dispatch_batch, 25)
 
 
 if __name__ == "__main__":
