@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime
 import sys
 import tempfile
@@ -600,3 +601,83 @@ class ArabicScriptGateTests(unittest.TestCase):
         with self.assertRaises(autoreply.AutoReplyError):
             autoreply.handle(self.store, inbound,
                              llm_caller=self.exploding_model())
+
+
+class RepeatedRepliesTests(unittest.TestCase):
+    """Одному человеку можно отвечать много раз.
+
+    Уникальность (кампания, контакт) — правило про рассылку: второй заход на
+    сегмент не должен слать человеку второе «первое касание». К ответам оно
+    неприменимо: разговор продолжается, и 03.08 сплошной индекс уронил второй
+    ответ с IntegrityError.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        contact = entities.add_contact(self.store, username="someone",
+                                       segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (self.thread_id, self.contact_id, now(), now()),
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add_inbound(self, ident: int, text: str):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, raw, created_at) "
+            "VALUES(?,821,'private_dm','@someone','someone',?,'{}',?)",
+            (ident, text, now()),
+        )
+        self.store.commit()
+        return dict(self.store.one("SELECT * FROM inbound WHERE id = ?", (ident,)))
+
+    def test_a_second_reply_to_the_same_person_is_allowed(self):
+        first = self.add_inbound(1, "Сколько стоит?")
+        autoreply.apply(self.store, first,
+                        verdict("auto_reply", reply_text="Тарифы от 29 000 ₽."))
+        self.store.execute(
+            "UPDATE tasks SET state = 'done', dispatched_at = ? "
+            "WHERE campaign_id = ?", (now(), replies.AUTO_CAMPAIGN_ID))
+        self.store.commit()
+
+        second = self.add_inbound(2, "Как вас зовут?")
+        autoreply.apply(self.store, second,
+                        verdict("auto_reply", reply_text="Меня зовут Юрий."))
+
+        tasks = self.store.query(
+            "SELECT id FROM tasks WHERE campaign_id = ?",
+            (replies.AUTO_CAMPAIGN_ID,))
+        self.assertEqual(len(tasks), 2, "второй ответ обязан ставиться")
+
+    def test_first_touch_uniqueness_still_holds_for_outreach(self):
+        """Защита рассылки от повторного касания должна остаться."""
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, segment, mode, status, "
+            "daily_cap, per_account_daily_cap, params, ttl_hours, created_at, "
+            "updated_at) VALUES('c1','c1','send_private_dm','','immediate',"
+            "'active',9,9,'{}',48,?,?)", (now(), now()))
+        def add_outreach_task():
+            self.store.execute(
+                "INSERT INTO tasks(id, campaign_id, contact_id, account_id, "
+                "action, params, mode, scheduled_at, state, created_at, "
+                "updated_at) VALUES(?,'c1',?,821,'send_private_dm','{}',"
+                "'immediate',?,'planned',?,?)",
+                (new_id("task"), self.contact_id, now(), now(), now()),
+            )
+
+        add_outreach_task()
+        self.store.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            add_outreach_task()

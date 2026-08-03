@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -117,8 +117,20 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks(state, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_command ON tasks(command_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_account_day ON tasks(account_id, dispatched_at);
+-- Одному контакту — одно касание в кампании. Правило про рассылку: второй
+-- заход на тот же сегмент не должен слать человеку второе «первое касание».
+--
+-- Ответы под него не подпадают, и это не послабление, а разная природа. С
+-- человеком, который нам пишет, разговор продолжается: он спросил цену, потом
+-- спросил про сроки, потом как нас зовут. Сплошной индекс означал бы, что
+-- ответить можно ровно один раз за всю жизнь диалога — второе сообщение
+-- падало бы с IntegrityError. Именно так и случилось 03.08.
+--
+-- От двух одновременных ответов защищает не индекс, а проверка в queue_reply:
+-- она смотрит, нет ли уже поставленного и неотправленного.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_campaign_contact
-  ON tasks(campaign_id, contact_id);
+  ON tasks(campaign_id, contact_id)
+  WHERE action <> 'reply_private_dm';
 
 -- Глобальная история касаний: кому мы вообще писали, независимо от кампании.
 -- Без неё вторая кампания на пересекающийся сегмент шлёт человеку второе
@@ -276,6 +288,28 @@ class Store:
                 self.conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {column} {kind}"
                 )
+        self._ensure_indexes()
+
+    def _ensure_indexes(self) -> None:
+        """Переделать индексы, которые изменились после создания базы.
+
+        ``CREATE INDEX IF NOT EXISTS`` существующий индекс не трогает, поэтому
+        превращение сплошной уникальности в частичную приходится делать руками:
+        иначе в уже живущей базе останется старое правило, и второй ответ
+        одному человеку так и будет падать.
+        """
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master "
+            " WHERE type = 'index' AND name = 'idx_tasks_campaign_contact'"
+        ).fetchone()
+        if row is None or "WHERE" in str(row["sql"] or "").upper():
+            return
+        self.conn.execute("DROP INDEX idx_tasks_campaign_contact")
+        self.conn.execute(
+            "CREATE UNIQUE INDEX idx_tasks_campaign_contact "
+            "  ON tasks(campaign_id, contact_id) "
+            "  WHERE action <> 'reply_private_dm'"
+        )
 
     # -- базовые операции ---------------------------------------------------
 
