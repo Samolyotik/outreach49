@@ -1,0 +1,82 @@
+{
+  "version": 2,
+  "updated_at": "2026-07-26",
+  "description": "Канонический состав полно-контекстного пакета знаний presales v2. База v1 включается целиком; внешние источники попадают в runtime после сверки, а решения владельца по 2026-07-26 включительно имеют приоритет над ранее найденными расхождениями.",
+  "owner_decision_revision": "2026-07-26",
+  "authority_order": [
+    "v1_curated",
+    "v2_curated_supplement"
+  ],
+  "v1_scope_policy": "union_of_current_working_and_owner_test_presales_v1_scopes",
+  "runtime_catalog": "customer_truth_runtime_v2.json",
+  "v1_sources": [
+    "tone_of_voice.md",
+    "autonomous_presales_policy.md",
+    "presales_assistant_playbook.md",
+    "answer_packs/legal_sensitive_pack.md",
+    "answer_packs/partner_program_pack.md",
+    "answer_packs/sector_fit_pack.md",
+    "answer_packs/services_pack.md",
+    "answer_packs/signal_examples_pack.md",
+    "answer_packs/reviews_pack.md",
+    "answer_packs/cases_pack.md",
+    "answer_packs/pricing_pack.md",
+    "answer_cards/pricing.md",
+    "answer_cards/cases.md",
+    "answer_cards/reviews.md",
+    "answer_cards/signal_examples.md",
+    "answer_cards/services.md",
+    "answer_cards/sector_fit.md",
+    "answer_cards/partner_program.md",
+    "answer_cards/legal_sensitive.md",
+    "answer_cards/company_identity.md",
+    "answer_cards/blog.md",
+    "fact_registry.md",
+    "reply_few_shots.md",
+    "company_profile.md",
+    "site_pages.md",
+    "service_scenarios.md",
+    "case_studies.md",
+    "reviews.md",
+    "examples/signal_examples.md",
+    "partner_program.md",
+    "blog_content.md",
+    "product_overview.md",
+    "offer.md",
+    "pricing_policy.md",
+    "free_test.md",
+    "faq.md",
+    "objections.md",
+    "allowed_claims.md",
+    "forbidden_claims.md",
+    "sector_notes/auto_china.md",
+    "onboarding.md",
+    "sector_notes/logistics_ved.md",
+    "sector_notes/marketing.md",
+    "sector_notes/real_estate_repair.md",
+    "sector_notes/tourism_visas.md",
+    "sector_notes/crm_1c.md",
+    "sector_notes/legal_bankruptcy.md",
+    "sector_notes/medicine.md",
+    "answer_cards/guarantees.md",
+    "answer_cards/outreach_surfaces.md",
+    "answer_cards/contact_source.md"
+  ],
+  "supplement_sources": [
+    "customer_truth_supplement_v2.md"
+  ],
+  "never_include_in_runtime_prompt": [
+    "customer_truth_conflicts_v2.md",
+    "customer_truth_audit_v2.md"
+  ],
+  "external_audit_roots": [
+    {
+      "id": "tg_radar_os",
+      "path": "/Users/dmitrykrupsky/Projects/TG RADAR OS"
+    },
+    {
+      "id": "tg_radar_outreach",
+      "path": "/Users/dmitrykrupsky/Projects/TG RADAR Outreach"
+    }
+  ]
+}

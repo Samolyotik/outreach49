@@ -1,3 +1,15 @@
+"""Промпт и контракт presales v2.
+
+Перенесено дословно с релиза a55d259. Изъята одна функция —
+``draft_presales_v2_reply``: она была входом из ``conversation.py`` и
+единственным местом в модуле, которое читало чужие таблицы. Все девять имён,
+которые модуль импортировал из ``presales``, использовались только внутри неё,
+поэтому после изъятия зависимости от ``presales`` не осталось совсем.
+
+Наш вход — ``mvp_inbound_decision.decide_inbound_reply``: он собирает контекст
+сам и до базы не доходит.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,31 +18,18 @@ import os
 import re
 import shlex
 import signal
-import sqlite3
 import subprocess
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Callable, ContextManager, Dict, Iterable, List, Optional
 
-from .account_identity import sender_account_identity
-from .customer_truth_pack import (
+from .llm import clean_reply_style, violates_reply_guardrails
+from .policy import normalize_text
+from .truth_pack import (
     CustomerTruthPack,
     load_customer_truth_pack,
     validate_source_references,
-)
-from .llm_assistant import clean_reply_style, violates_reply_guardrails
-from .policy import MessageClassification, normalize_text
-from .presales import (
-    CHAT_SENDER_PRIVATE_ENTRY_MODE,
-    PresalesDraft,
-    build_llm_context,
-    count_auto_replies_for_conversation,
-    is_likely_quoted_public_chat_request,
-    presales_entry_mode,
-    recent_messages,
-    recent_public_chat_outreach_context,
-    store_presales_context,
 )
 
 
@@ -319,203 +318,6 @@ class PresalesV2Normalized:
     reason: str
     technical_failure: bool
     validation_warnings: List[str]
-
-
-def draft_presales_v2_reply(
-    conn: sqlite3.Connection,
-    conversation: sqlite3.Row,
-    recipient: sqlite3.Row,
-    inbound_text: str,
-    classification: MessageClassification,
-    *,
-    max_auto_replies: int,
-    manager_nudge_after_replies: int,
-    reasoning_effort: str = "high",
-    timeout_seconds: float = 240,
-    typing_indicator: Optional[Callable[[], ContextManager[None]]] = None,
-    direct_invite_context: Optional[Dict[str, str]] = None,
-    direct_invite_sector_catalog: Optional[List[Dict[str, str]]] = None,
-    command: Optional[str] = None,
-    truth_pack: Optional[CustomerTruthPack] = None,
-    supersession_check: Optional[Callable[[], str]] = None,
-) -> PresalesDraft:
-    generation_started = time.monotonic()
-    pack = truth_pack or load_customer_truth_pack()
-    history = recent_messages(conn, str(conversation["id"]), limit=5000)
-    auto_reply_count = count_auto_replies_for_conversation(
-        conn,
-        str(conversation["id"]),
-    )
-    sender_account = sender_account_identity(
-        conn,
-        str(conversation["sender_account_id"]),
-    )
-    entry_mode = presales_entry_mode(conversation, recipient, sender_account)
-    recent_public = (
-        recent_public_chat_outreach_context(
-            conn,
-            sender_account_id=str(conversation["sender_account_id"]),
-            reference_at=(
-                str(history[-1]["created_at"])
-                if history
-                else str(conversation["created_at"] or "")
-            ),
-        )
-        if entry_mode == CHAT_SENDER_PRIVATE_ENTRY_MODE
-        else []
-    )
-    context = build_llm_context(
-        conversation=conversation,
-        recipient=recipient,
-        sender_account=sender_account,
-        classification=classification,
-        history=history,
-        auto_reply_count=auto_reply_count,
-        max_auto_replies=max_auto_replies,
-        manager_nudge_after_replies=manager_nudge_after_replies,
-        entry_mode=entry_mode,
-        recent_public_chat_outreach=recent_public,
-    )
-    # v1 intentionally trims history for retrieval prompts. v2 is the isolated
-    # full-context engine, so replace that projection with the complete dialog.
-    context["message_history"] = history
-    context["conversation_id"] = str(conversation["id"])
-    context["active_handoff"] = str(conversation["handoff_status"] or "") in {
-        "pending",
-        "taken",
-    }
-    context["presales_engine"] = "v2_full_context"
-    discovery_context = context.get("discovery_context")
-    stored_sector = (
-        str(discovery_context.get("sector") or "").strip()
-        if isinstance(discovery_context, dict)
-        else ""
-    )
-    context["free_test_sector_known"] = bool(
-        direct_invite_context or stored_sector
-    )
-    if direct_invite_context:
-        context["free_test_access_branch"] = dict(direct_invite_context)
-    context["automatic_free_test_sector_catalog"] = list(
-        direct_invite_sector_catalog or []
-    )
-    if entry_mode == CHAT_SENDER_PRIVATE_ENTRY_MODE:
-        context["quoted_public_chat_request_likely"] = (
-            is_likely_quoted_public_chat_request(
-                inbound_text,
-                history,
-                recent_public,
-            )
-        )
-    required = required_topics_for_turn(inbound_text)
-    payload = build_presales_v2_prompt(
-        inbound_text=inbound_text,
-        context=context,
-        pack=pack,
-        required_topics=required,
-        reasoning_effort=reasoning_effort,
-    )
-    prompt_hash = sha256_json(payload)
-    attempts = 0
-    normalized: PresalesV2Normalized | None = None
-    repair_reason = ""
-    with typing_indicator() if typing_indicator is not None else nullcontext():
-        for attempt in range(1, PRESALES_V2_MAX_PRIMARY_ATTEMPTS + 1):
-            attempts = attempt
-            active_payload = dict(payload)
-            active_payload["runtime_attempt"] = attempt
-            if attempt > 1:
-                repair_reason = (
-                    normalized.reason
-                    if normalized is not None
-                    else "presales_v2_unknown_hard_validation_failure"
-                )
-                active_payload["repair_instruction"] = (
-                    presales_v2_repair_instruction(repair_reason)
-                )
-            external = call_presales_v2_llm(
-                active_payload,
-                command=command,
-                timeout_seconds=timeout_seconds,
-                supersession_check=supersession_check,
-            )
-            if external.raw is None:
-                normalized = technical_failure_result(external.reason)
-                continue
-            normalized = normalize_presales_v2_result(
-                external.raw,
-                pack=pack,
-                required_topics=required,
-                inbound_text=inbound_text,
-                allowed_direct_invite_sector_ids=[
-                    str(item.get("outreach_sector_id") or "")
-                    for item in direct_invite_sector_catalog or []
-                    if str(item.get("outreach_sector_id") or "").strip()
-                ],
-                required_direct_invite_sector_id=(
-                    str(direct_invite_context.get("outreach_sector_id") or "")
-                    if direct_invite_context
-                    else ""
-                ),
-                confirmed_sector_available=bool(
-                    context["free_test_sector_known"]
-                ),
-            )
-            if not normalized.technical_failure:
-                break
-    if normalized is None:
-        normalized = technical_failure_result("presales_v2_no_result")
-
-    if normalized.collected_fields_update:
-        store_presales_context(
-            conn,
-            conversation_id=str(conversation["id"]),
-            updates=normalized.collected_fields_update,
-        )
-    valid_sources, invalid_sources = validate_source_references(
-        pack,
-        normalized.used_source_ids,
-    )
-    return PresalesDraft(
-        ok=normalized.ok,
-        text=normalized.reply_text,
-        confidence=normalized.confidence,
-        risk_level=normalized.risk_level,
-        source_files=valid_sources,
-        next_state=normalized.next_state or "FAQ automation",
-        reason=normalized.reason,
-        handoff_required=normalized.handoff_required,
-        handoff_reason=normalized.handoff_reason,
-        handoff_kind=normalized.handoff_kind,
-        matched_direct_invite_sector_id=(
-            normalized.matched_direct_invite_sector_id
-        ),
-        knowledge_gap=normalized.knowledge_gap,
-        intent=normalized.intent,
-        decision=normalized.decision,
-        reply_source="external_llm_v2_full_context",
-        collected_fields_update=normalized.collected_fields_update,
-        retrieved_source_files=list(pack.source_paths),
-        claimed_used_sources=normalized.used_source_ids,
-        validated_used_sources=valid_sources,
-        invalid_used_sources=[*normalized.invalid_source_ids, *invalid_sources],
-        primary_llm_attempts=attempts,
-        engine_version="v2",
-        truth_pack_sha256=pack.sha256,
-        prompt_sha256=prompt_hash,
-        turn_items=normalized.turn_items,
-        required_topics=required,
-        coverage_complete=normalized.coverage_complete,
-        technical_failure=normalized.technical_failure,
-        contract_version=PRESALES_V2_CONTRACT,
-        hard_validation_passed=not normalized.technical_failure,
-        validation_warnings=normalized.validation_warnings,
-        repair_reason=repair_reason,
-        truth_fact_count=len(pack.facts),
-        truth_runtime_characters=pack.runtime_characters,
-        prompt_characters=len(json.dumps(payload, ensure_ascii=False)),
-        generation_duration_ms=int((time.monotonic() - generation_started) * 1000),
-    )
 
 
 def build_presales_v2_prompt(

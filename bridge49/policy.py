@@ -1,22 +1,20 @@
+"""Локальный разбор входящего сообщения.
+
+Перенесено с релиза a55d259. Взята только чистая часть — разбор текста:
+отказ от переписки, жёсткий негатив, язык, рекламный спам, намерение.
+
+Отброшен хвост модуля (``recipient_has_required_consent`` и далее): он
+отбирает получателей для рассылки по чужим таблицам ``recipients``,
+``conversations`` и ``send_queue``. К ответу на входящее это отношения не
+имеет, а кого и когда можно трогать, у нас решает свой preflight.
+"""
+
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-
-OPEN_CONVERSATION_STATES = {
-    "Queued",
-    "First touch sent",
-    "Waiting reply",
-    "Interested",
-    "FAQ automation",
-    "Knowledge review",
-    "Qualified",
-    "Manager handoff",
-    "Manager takeover",
-}
 
 OPT_OUT_PATTERNS = [
     r"\bстоп\b",
@@ -254,81 +252,3 @@ def classify_inbound(text: str) -> MessageClassification:
         automation_paused=False,
         reason="llm_semantic_authority",
     )
-
-
-def recipient_has_required_consent(recipient: sqlite3.Row) -> bool:
-    return (
-        recipient["consent_status"] == "active"
-        and bool(recipient["consent_source"])
-        and bool(recipient["consent_date"])
-        and recipient["opt_out_status"] == 0
-    )
-
-
-def recipient_has_reachable_target(recipient: sqlite3.Row) -> bool:
-    recipient_type = recipient["recipient_type"]
-    if recipient_type == "user":
-        return bool(recipient["telegram_user_id"] or recipient["telegram_username"])
-    if recipient_type == "channel_dm":
-        if not (recipient["telegram_channel_username"] or recipient["channel_chat_id"]):
-            return False
-        if recipient["channel_dm_available"] != 1:
-            return False
-        if recipient["channel_dm_status"] not in ("available", "paid"):
-            return False
-        paid_stars = recipient["paid_message_stars"]
-        if paid_stars is not None and int(paid_stars) > 0 and not recipient["paid_dm_approved_at"]:
-            return False
-        return True
-    return False
-
-
-def recipient_past_cooldown(recipient: sqlite3.Row, now: datetime, cooldown_days: int) -> bool:
-    if not recipient["last_contacted_at"]:
-        return True
-    last_contacted = parse_iso(recipient["last_contacted_at"])
-    return last_contacted <= now - timedelta(days=cooldown_days)
-
-
-def recipient_is_eligible(
-    conn: sqlite3.Connection,
-    recipient: sqlite3.Row,
-    campaign: sqlite3.Row,
-    now: datetime,
-    min_priority_score: float = 0,
-    cooldown_days: int = 30,
-) -> bool:
-    if not recipient_has_required_consent(recipient):
-        return False
-    if not recipient_has_reachable_target(recipient):
-        return False
-    if recipient["segment"] != campaign["segment"]:
-        return False
-    if float(recipient["priority_score"]) < min_priority_score:
-        return False
-    if not recipient_past_cooldown(recipient, now, cooldown_days):
-        return False
-
-    open_count = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM conversations
-        WHERE recipient_id = ?
-          AND state IN ({})
-        """.format(",".join("?" for _ in OPEN_CONVERSATION_STATES)),
-        (recipient["id"], *sorted(OPEN_CONVERSATION_STATES)),
-    ).fetchone()["count"]
-    if open_count:
-        return False
-
-    pending_count = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM send_queue
-        WHERE recipient_id = ?
-          AND campaign_id = ?
-          AND status = 'pending'
-        """,
-        (recipient["id"], campaign["id"]),
-    ).fetchone()["count"]
-    return pending_count == 0

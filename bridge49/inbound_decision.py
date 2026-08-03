@@ -1,3 +1,14 @@
+"""Решение по входящему сообщению.
+
+Перенесено дословно с релиза a55d259. Единственная правка — имена модулей:
+``customer_truth_pack`` → ``truth_pack``, а шесть функций сборки контекста
+переехали из ``presales`` в ``presales_context``.
+
+Функция ``decide_inbound_reply`` ничего не пишет и не читает из базы: на вход
+идёт словарь, на выход решение. Всё, что происходит с этим решением дальше —
+очередь, темп, отправка — наше и живёт снаружи.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,14 +16,14 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Optional, Union
 
-from .customer_truth_pack import CustomerTruthPack, load_customer_truth_pack
 from .policy import MessageClassification, classify_inbound
-from .presales import (
+from .presales_context import (
     CHAT_SENDER_PRIVATE_ENTRY_MODE,
     INBOUND_REFERRAL_CAMPAIGN_ID,
     build_llm_context,
     non_silent_boundary_reply,
 )
+from .truth_pack import CustomerTruthPack, load_customer_truth_pack
 from .presales_v2 import (
     PRESALES_V2_MAX_PRIMARY_ATTEMPTS,
     PresalesV2ExternalResult,
