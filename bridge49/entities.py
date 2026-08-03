@@ -265,6 +265,7 @@ def add_campaign(
     per_account_daily_cap: int = 12,
     params: dict | None = None,
     allow_repeat_contacts: bool = False,
+    roles: Iterable[str] = (),
     ttl_hours: int = 48,
     note: str | None = None,
     campaign_id: str | None = None,
@@ -275,6 +276,15 @@ def add_campaign(
         raise ValueError(f"неизвестное действие: {action}")
     if mode not in ("lottery", "immediate"):
         raise ValueError("mode должен быть lottery или immediate")
+    unknown_roles = sorted(set(roles) - set(catalog.ROLES))
+    if unknown_roles:
+        raise ValueError(f"неизвестные роли: {unknown_roles}")
+    narrowed = sorted(set(roles))
+    if narrowed and not (set(narrowed) & spec.roles):
+        raise ValueError(
+            f"{action} не разрешён ни одной из ролей {narrowed}; "
+            f"действие требует одну из {sorted(spec.roles)}"
+        )
     if spec.needs_text and not template_id:
         raise ValueError(f"{action} требует текст — укажите шаблон")
     if template_id and not store.one(
@@ -286,20 +296,21 @@ def add_campaign(
     store.execute(
         "INSERT INTO campaigns(id, name, action, template_id, segment, mode, "
         "daily_cap, per_account_daily_cap, params, allow_repeat_contacts, "
-        "ttl_hours, note, created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "roles, ttl_hours, note, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET name=excluded.name, action=excluded.action, "
         "template_id=excluded.template_id, segment=excluded.segment, "
         "mode=excluded.mode, daily_cap=excluded.daily_cap, "
         "per_account_daily_cap=excluded.per_account_daily_cap, "
         "params=excluded.params, "
         "allow_repeat_contacts=excluded.allow_repeat_contacts, "
+        "roles=excluded.roles, "
         "ttl_hours=excluded.ttl_hours, note=excluded.note, "
         "updated_at=excluded.updated_at",
         (campaign_id, name, action, template_id, segment, mode, int(daily_cap),
          int(per_account_daily_cap), dumps(params or {}),
-         1 if allow_repeat_contacts else 0, int(ttl_hours), note,
-         now(), now()),
+         1 if allow_repeat_contacts else 0, dumps(narrowed),
+         int(ttl_hours), note, now(), now()),
     )
     store.log(actor, "campaigns.upsert", campaign_id, f"{name} / {action}")
     store.commit()
@@ -325,4 +336,5 @@ def get_campaign(store: Store, campaign_id: str) -> dict | None:
         return None
     campaign = dict(row)
     campaign["params"] = loads(campaign.get("params"), {})
+    campaign["roles"] = loads(campaign.get("roles"), [])
     return campaign

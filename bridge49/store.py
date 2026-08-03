@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   -- Отдельной колонкой, а не ключом в params: params уезжают в Radar как
   -- параметры действия и валидируются каталогом — чужой ключ там не пройдёт.
   allow_repeat_contacts INTEGER NOT NULL DEFAULT 0,
+  -- Кому поручать. Пусто — любому, кому действие разрешено. Нужно там, где
+  -- роль решает не только допуск: `check_channel_dm_metadata` по контракту
+  -- разрешён и отправителям каналов, но разведку каталога ведут читатели.
+  roles          TEXT NOT NULL DEFAULT '[]',
   ttl_hours      INTEGER NOT NULL DEFAULT 48,       -- request.expires_at
   note           TEXT,
   created_at     TEXT NOT NULL,
@@ -276,6 +280,11 @@ class Store:
         # Что модель успела узнать о собеседнике (сфера, задача, источник).
         # Копится по диалогу и уезжает в следующий запрос как discovery_context.
         ("threads", "presales_context", "TEXT"),
+        # Кому поручать эту кампанию, если роль решает не только допуск.
+        # Пусто — любой, кому действие разрешено. Отдельной колонкой, а не
+        # ключом в params: params уезжают в Radar как параметры действия и
+        # валидируются каталогом — чужой ключ там не пройдёт.
+        ("campaigns", "roles", "TEXT NOT NULL DEFAULT '[]'"),
     )
 
     def _ensure_columns(self) -> None:

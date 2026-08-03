@@ -439,8 +439,13 @@ def load(home: Path | str | None = None, *, need_dsn: bool = False) -> Settings:
         for key, value in raw.items():
             if hasattr(limits, key):
                 setattr(limits, key, value)
-        if isinstance(limits.send_weekdays, list):
-            limits.send_weekdays = tuple(limits.send_weekdays)
+        # JSON знает только списки, а дни недели дальше сравниваются и
+        # печатаются как кортежи. Приводим все три набора, а не один: забытый
+        # набор ведёт себя правильно ровно до первой попытки его показать.
+        for field_name in ("send_weekdays", "reply_weekdays", "read_weekdays"):
+            value = getattr(limits, field_name)
+            if isinstance(value, list):
+                setattr(limits, field_name, tuple(value))
         # Файл может только ужесточать темп. Всё, что мягче пола, зажимается.
         notes = clamp(limits)
 

@@ -285,6 +285,53 @@ class ReadCadenceTests(unittest.TestCase):
         self.assertEqual([t["action"] for t in only_read],
                          ["check_channel_dm_metadata"])
 
+    # -- кому поручаем -------------------------------------------------------
+
+    def test_a_campaign_can_narrow_the_pool_to_readers(self):
+        """Допуск и уместность — разные вещи.
+
+        `check_channel_dm_metadata` контракт разрешает и отправителям каналов.
+        Без сужения план 03.08 разложил разведку каталога на тридцать аккаунтов
+        вместо тринадцати: отправители тратили бы свой лимит resolve на чужую
+        работу.
+        """
+        accounts_mod.sync(self.store, [{
+            "id": 802, "label": "sender-one", "runtime_state": "running",
+            "outreach": {
+                "enabled": True, "roles": ["channel_sender"],
+                "allow_immediate_visible_actions": True,
+                "allowed_actions": ["check_channel_dm_metadata"],
+            },
+        }])
+        for index in range(4):
+            entities.add_contact(
+                self.store, username=f"src{index}", kind="channel",
+                segment="sources", actor="test",
+            )
+
+        wide = planner.plan(self.store, "recon", limits=self.settings.limits,
+                            dry_run=True)
+        self.store.execute(
+            "UPDATE campaigns SET roles = ? WHERE id = 'recon'",
+            ('["source_reader"]',),
+        )
+        self.store.commit()
+        narrow = planner.plan(self.store, "recon", limits=self.settings.limits,
+                              dry_run=True)
+
+        self.assertEqual(wide["pool"], 2)
+        self.assertEqual(narrow["pool"], 1)
+        self.assertEqual({t["account_id"] for t in narrow["tasks"]}, {801})
+
+    def test_narrowing_to_a_role_that_cannot_do_it_is_refused(self):
+        """Сужение до роли без допуска — ошибка, а не пустой план."""
+        with self.assertRaises(ValueError) as caught:
+            entities.add_campaign(
+                self.store, name="ерунда", action="check_public_chat_metadata",
+                roles=["dm_sender"], campaign_id="nope",
+            )
+        self.assertIn("не разрешён", str(caught.exception))
+
     # -- план и выпуск говорят одними числами -------------------------------
 
     def test_the_plan_uses_the_same_floor_the_dispatcher_checks(self):
