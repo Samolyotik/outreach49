@@ -180,13 +180,15 @@ class Limits:
     #: Пауза между чтениями разных аккаунтов, сек. Их `global_gap`.
     read_global_interval_min_sec: int = 60
     read_global_interval_max_sec: int = 90
-    #: Окно разведки. Оно у прежнего контура было — `work_calendar` в обоих
-    #: боевых конфигах: 06:00–23:00 МСК, все семь дней. Собеседник чтения не
-    #: видит, но Telegram видит аккаунт, который перебирает имена в четыре
-    #: утра, — а живой человек в это время спит. Выходных при этом нет:
-    #: разведка не рассылка, ей незачем притворяться рабочей неделей.
-    read_window_start_hour: int = 6
-    read_window_end_hour: int = 23
+    #: Разведка идёт круглосуточно — решение владельца от 03.08.2026.
+    #:
+    #: У прежнего контура окно было (`work_calendar`, 06:00–23:00 МСК в обоих
+    #: боевых конфигах), и довод за него понятен: аккаунт, перебирающий имена
+    #: в четыре утра, на живого человека не похож. Довод против оказался
+    #: сильнее — чтение никому не видно, ночь это треть суток, а от лимита
+    #: resolve защищает не расписание, а скорость, и она остаётся прежней.
+    read_window_start_hour: int = 0
+    read_window_end_hour: int = 24
     read_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
 
 
@@ -224,8 +226,10 @@ HARD_REPLY_WINDOW_END_HOUR = 24
 HARD_MAX_READ_DAILY = 100
 HARD_MIN_READ_INTERVAL_SEC = 240
 HARD_MIN_READ_GLOBAL_INTERVAL_SEC = 60
-HARD_READ_WINDOW_START_HOUR = 6
-HARD_READ_WINDOW_END_HOUR = 23
+#: Ночь разведке не запрещаем — см. `read_window_*`. Пол оставлен только на
+#: бессмысленные значения (перевёрнутое или вышедшее за сутки окно).
+HARD_READ_WINDOW_START_HOUR = 0
+HARD_READ_WINDOW_END_HOUR = 24
 
 
 def clamp(limits: Limits) -> list[str]:

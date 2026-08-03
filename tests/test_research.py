@@ -38,9 +38,9 @@ SNAPSHOT = [
 ]
 
 
-#: Понедельник, 15:00 по Москве — середина окна разведки (06:00–23:00).
-#: Время в тестах заморожено: иначе половина из них падала бы по ночам, и
-#: падала бы правильно — окно у чтения есть.
+#: Понедельник, 15:00 по Москве. Время заморожено не ради окна (у разведки его
+#: нет), а ради дневного счётчика и пола: они меряются от «сейчас», и без
+#: заморозки проверка, начатая в 23:59:59, считала бы завтрашний день.
 MIDDAY = datetime(2026, 8, 3, 12, 0, tzinfo=timezone.utc)
 
 
@@ -188,25 +188,21 @@ class ReadCadenceTests(unittest.TestCase):
         with self.assertRaises(dispatcher.DispatchTooEarly):
             dispatcher.preflight(self.store, self.pending(), self.settings)
 
-    def test_reading_keeps_the_night_out_but_works_on_sunday(self):
-        """Окно у разведки есть — 06:00–23:00, но выходных нет.
+    def test_reading_runs_round_the_clock(self):
+        """Окна у разведки нет — решение владельца от 03.08.2026.
 
-        Прежний контур держал именно такой `work_calendar` в обоих боевых
-        конфигах. Ночь исключена не ради собеседника (он чтения не видит), а
-        ради самого аккаунта: живой человек в четыре утра имена не перебирает.
+        У прежнего контура окно было (06:00–23:00), и довод за него понятен:
+        аккаунт, перебирающий имена ночью, на живого человека не похож. Довод
+        против оказался сильнее — чтение никому не видно, ночь это треть
+        суток, а от лимита resolve защищает скорость, а не расписание.
         """
         self.settings.limits.read_per_account_interval_sec = 0
-        night = datetime(2026, 8, 2, 1, 30, tzinfo=timezone.utc)  # 04:30 МСК
-        sunday_noon = datetime(2026, 8, 2, 9, 0, tzinfo=timezone.utc)
+        night = datetime(2026, 8, 2, 1, 30, tzinfo=timezone.utc)  # 04:30 МСК вс
 
         with frozen_clock(night):
-            with self.assertRaises(dispatcher.DispatchBlocked) as caught:
-                dispatcher.preflight(self.store, self.pending(), self.settings)
-            self.assertIn("вне окна разведки", str(caught.exception))
-
-        with frozen_clock(sunday_noon):  # воскресенье — рабочий день разведки
             action = dispatcher.preflight(
                 self.store, self.pending(), self.settings)
+
         self.assertEqual(action.risk, catalog.RISK_READ)
 
     def test_the_numbers_are_the_ones_the_old_contour_proved(self):
@@ -228,6 +224,10 @@ class ReadCadenceTests(unittest.TestCase):
         )
         self.assertEqual(limits.read_global_interval_min_sec, 60)
         self.assertEqual(limits.read_global_interval_max_sec, 90)
+        # Окно — единственное, что мы у них НЕ взяли: у них 06:00-23:00,
+        # у нас круглосуточно по решению владельца от 03.08.2026.
+        self.assertEqual(limits.read_window_start_hour, 0)
+        self.assertEqual(limits.read_window_end_hour, 24)
         # Огибающая всех трёх их профилей: быстрее «fast» не пускаем никого.
         self.assertEqual(config.HARD_MAX_READ_DAILY, 100)
         self.assertEqual(config.HARD_MIN_READ_INTERVAL_SEC, 240)
