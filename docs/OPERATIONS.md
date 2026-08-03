@@ -56,6 +56,8 @@ cd /opt/outreach49 && bin/bridge49 accounts --sync accounts.json
 |---|---|---|
 | каждые 5 минут | `dispatch --confirm` | выпускать созревшие задачи |
 | каждые 15 секунд | `poll` | подтягивать результаты и входящие |
+| каждые 20 секунд | `autoreply run` | разбирать входящие движком |
+| каждую минуту | `dispatch --read --confirm --limit 1` | разведка источников |
 | каждые 2 минуты | `watchdog` | замечать, что контур замолчал |
 | раз в сутки | `accounts --sync accounts.json` | освежать реестр |
 
@@ -64,6 +66,55 @@ systemctl enable --now outreach49-poll.timer
 systemctl enable --now outreach49-watchdog.timer
 systemctl enable --now outreach49-dispatch.timer
 ```
+
+Рассылочный `dispatch` без `--campaign` выпускает всё созревшее. Поэтому у
+разведки свой таймер с `--read`: он сужен до класса чтения и рассылку не
+трогает — она по решению владельца остаётся на ручном управлении.
+
+## Разведка источников
+
+Аккаунты `source_reader` проверяют метаданные каналов и чатов: есть ли у канала
+бесплатная личка (`check_channel_dm_metadata`), можно ли писать в чат
+(`check_public_chat_metadata`). Собеседник этого не видит, но каждая проверка —
+это resolve имени, у которого свой лимит в Telegram.
+
+Темп взят у прежнего контура (`configs/account_task_speeds.json`, роль
+`source_reader`, профиль `standard`) и вынесен в `var/limits.json`:
+
+| | |
+|---|---|
+| в сутки на аккаунт | 100 |
+| между чтениями аккаунта | 240–360 с |
+| между аккаунтами | 60–90 с |
+| окно | 06:00–23:00, все семь дней |
+
+Отсюда пропускная способность: около 48 проверок в час, порядка 800 в сутки на
+весь флот. Каталог в шесть тысяч целей проходится примерно за неделю.
+
+Каталог приезжает из прежней системы разово:
+
+```bash
+python3 scripts/import_sources_from_tgradar_outreach.py \
+    --source /var/lib/tgradar-outreach/production/runtime/outreach.sqlite --apply
+```
+
+Берутся только цели в статусе `validation_pending` — те, что LLM одобрила, а
+проверка не прошла. Сегменты: `recon_channels`, `recon_chats`.
+
+Кампании сужены до читателей (`--role source_reader`). Это не формальность:
+`check_channel_dm_metadata` контракт разрешает и `channel_sender`, и без
+сужения план раскладывается на тридцать аккаунтов вместо тринадцати —
+отправители начинают тратить свой лимит resolve на чужую работу.
+
+Что выяснили — командой `sources`:
+
+```bash
+bridge49 sources --campaign recon_chats --limit 50
+bridge49 sources --verdict "есть личка" --csv /tmp/channels_with_dm.csv
+```
+
+Колонки выгрузки (`username`, `tg_id`, `kind`) понимает `contacts --import`:
+отфильтровали файл — завели из него сегмент под рассылку.
 
 Сторож не чинит и не останавливает — только смотрит на давность: когда в
 последний раз ходил поллер, отвечает ли мост, не отстал ли курсор входящих, не
