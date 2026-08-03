@@ -37,9 +37,21 @@ class ReplyError(RuntimeError):
     """Ответ поставить нельзя, и причина требует решения человека."""
 
 
-def ensure_reply_campaign(store: Store) -> str:
+#: Автоответы идут своей кампанией, а не вместе с ручными. Кампания — это
+#: место, где живут дневные лимиты, и мешать их нельзя: наплыв входящих не
+#: должен съедать бюджет рассылки, а рассылка — глушить ответы людям.
+AUTO_CAMPAIGN_ID = "autoreplies"
+AUTO_CAMPAIGN_NAME = "Автоответы"
+
+
+def ensure_reply_campaign(
+    store: Store,
+    campaign_id: str = REPLY_CAMPAIGN_ID,
+    name: str = REPLY_CAMPAIGN_NAME,
+    note: str = "служебная: ручные ответы на входящие",
+) -> str:
     """Создать служебную кампанию, если её ещё нет."""
-    row = store.one("SELECT id FROM campaigns WHERE id = ?", (REPLY_CAMPAIGN_ID,))
+    row = store.one("SELECT id FROM campaigns WHERE id = ?", (campaign_id,))
     if row is None:
         store.execute(
             "INSERT INTO campaigns(id, name, action, template_id, segment, mode, "
@@ -47,10 +59,9 @@ def ensure_reply_campaign(store: Store) -> str:
             "allow_repeat_contacts, ttl_hours, note, created_at, updated_at) "
             "VALUES(?,?,'reply_private_dm',NULL,'','lottery','active',"
             "999,99,'{}',1,48,?,?,?)",
-            (REPLY_CAMPAIGN_ID, REPLY_CAMPAIGN_NAME,
-             "служебная: ручные ответы на входящие", now(), now()),
+            (campaign_id, name, note, now(), now()),
         )
-    return REPLY_CAMPAIGN_ID
+    return campaign_id
 
 
 def find_thread(
@@ -239,11 +250,20 @@ def queue_reply(
     peer: str | None = None,
     mode: str = "immediate",
     actor: str = "cli",
+    campaign_id: str | None = None,
+    review_reason: str | None = None,
+    scheduled_at: str | None = None,
 ) -> dict[str, Any]:
     """Поставить ответ в очередь. Ничего никуда не отправляет.
 
     Отправку по-прежнему делает только `dispatch`, и только при ARMED: ответ
     проходит ровно те же ворота темпа, что и всё остальное.
+
+    ``campaign_id`` разводит ручные ответы и автоответы по разным кампаниям:
+    лимиты живут на кампании, и смешивать их нельзя. ``review_reason`` метит
+    ответ, который движок выдал неуверенно, — отправить его можно, но человек
+    должен перечитать. ``scheduled_at`` откладывает выпуск: автоответ уходит
+    не мгновенно, а спустя паузу на чтение.
     """
     message = (text or "").strip()
     if not message:
@@ -256,7 +276,7 @@ def queue_reply(
     )
     inbound = last_inbound(store, thread)
     contact_id = ensure_contact(store, thread, inbound)
-    campaign_id = ensure_reply_campaign(store)
+    campaign_id = ensure_reply_campaign(store) if campaign_id is None else campaign_id
 
     pending = store.one(
         "SELECT id FROM tasks WHERE campaign_id = ? AND contact_id = ? "
@@ -272,14 +292,15 @@ def queue_reply(
     task_id = new_id("task")
     store.execute(
         "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
-        "params, mode, scheduled_at, expires_at, state, created_at, updated_at) "
-        "VALUES(?,?,?,?,'reply_private_dm',?,?,?,NULL,'planned',?,?)",
+        "params, mode, scheduled_at, expires_at, state, review_reason, "
+        "created_at, updated_at) "
+        "VALUES(?,?,?,?,'reply_private_dm',?,?,?,NULL,'planned',?,?,?)",
         (task_id, campaign_id, contact_id, int(thread["account_id"]),
          dumps({
              "inbound_notification_id": int(inbound["id"]),
              "text": message,
          }),
-         mode, now(), now(), now()),
+         mode, scheduled_at or now(), review_reason or None, now(), now()),
     )
     store.log(actor, "reply.queue", task_id,
               f"acc={thread['account_id']} peer={thread['peer_key']}")
@@ -291,4 +312,5 @@ def queue_reply(
         "peer": thread["peer_key"],
         "inbound_id": int(inbound["id"]),
         "mode": mode,
+        "review_reason": review_reason or "",
     }

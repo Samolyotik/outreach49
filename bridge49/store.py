@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -257,6 +257,13 @@ class Store:
         # тогда, когда мост ответил отказом: попытка всё равно расходует темп.
         ("tasks", "attempted_at", "TEXT"),
         ("campaigns", "allow_repeat_contacts", "INTEGER NOT NULL DEFAULT 0"),
+        # Почему автоответ стоит перечитать глазами. Пусто — движок был уверен.
+        # Метка живёт на задаче, а не на диалоге: перечитывать нужно конкретное
+        # отправленное сообщение, и таких в одном диалоге может быть несколько.
+        ("tasks", "review_reason", "TEXT"),
+        # Что модель успела узнать о собеседнике (сфера, задача, источник).
+        # Копится по диалогу и уезжает в следующий запрос как discovery_context.
+        ("threads", "presales_context", "TEXT"),
     )
 
     def _ensure_columns(self) -> None:
