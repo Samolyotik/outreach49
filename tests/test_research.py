@@ -415,6 +415,64 @@ class ReadCadenceTests(unittest.TestCase):
         self.assertEqual(narrow["pool"], 1)
         self.assertEqual({t["account_id"] for t in narrow["tasks"]}, {801})
 
+    def test_a_campaign_can_be_pinned_to_named_accounts(self):
+        """Две разведки параллельно разными людьми, а не одна за другой."""
+        accounts_mod.sync(self.store, [
+            {"id": 802, "label": "r2", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["source_reader"],
+                          "allowed_actions": ["check_channel_dm_metadata"]}},
+        ])
+        for index in range(4):
+            entities.add_contact(
+                self.store, username=f"src{index}", kind="channel",
+                segment="sources", actor="test",
+            )
+        self.store.execute(
+            "UPDATE campaigns SET accounts = ? WHERE id = 'recon'", ("[802]",)
+        )
+        self.store.commit()
+
+        plan = planner.plan(self.store, "recon", limits=self.settings.limits,
+                            dry_run=True)
+
+        self.assertEqual(plan["pool"], 1)
+        self.assertEqual({t["account_id"] for t in plan["tasks"]}, {802})
+
+    def test_a_pinned_account_that_went_away_is_loud(self):
+        """Аккаунт ушёл на паузу — кампанию ведёт меньше людей, чем решили."""
+        accounts_mod.sync(self.store, [
+            {"id": 802, "label": "r2", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["source_reader"],
+                          "allowed_actions": ["check_channel_dm_metadata"]}},
+        ])
+        entities.add_contact(self.store, username="src0", kind="channel",
+                             segment="sources", actor="test")
+        self.store.execute(
+            "UPDATE campaigns SET accounts = ? WHERE id = 'recon'",
+            ("[801, 802]",),
+        )
+        self.store.commit()
+        accounts_mod.pause(self.store, 802, True)
+
+        with self.assertRaises(planner.PlanError) as caught:
+            planner.plan(self.store, "recon", limits=self.settings.limits,
+                         dry_run=True)
+        self.assertIn("802", str(caught.exception))
+
+    def test_pinning_an_account_that_cannot_do_it_is_refused(self):
+        accounts_mod.sync(self.store, [
+            {"id": 804, "label": "sender", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["dm_sender"],
+                          "allowed_actions": ["send_private_dm"]}},
+        ])
+
+        with self.assertRaises(ValueError) as caught:
+            entities.add_campaign(
+                self.store, name="ерунда", action="check_public_chat_metadata",
+                accounts=[804], campaign_id="nope2",
+            )
+        self.assertIn("нельзя", str(caught.exception))
+
     def test_narrowing_to_a_role_that_cannot_do_it_is_refused(self):
         """Сужение до роли без допуска — ошибка, а не пустой план."""
         with self.assertRaises(ValueError) as caught:

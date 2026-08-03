@@ -266,6 +266,7 @@ def add_campaign(
     params: dict | None = None,
     allow_repeat_contacts: bool = False,
     roles: Iterable[str] = (),
+    accounts: Iterable[int] = (),
     ttl_hours: int = 48,
     note: str | None = None,
     campaign_id: str | None = None,
@@ -285,6 +286,28 @@ def add_campaign(
             f"{action} не разрешён ни одной из ролей {narrowed}; "
             f"действие требует одну из {sorted(spec.roles)}"
         )
+
+    # Поимённый список проверяем строго: молча выкинуть аккаунт, которого нет
+    # или которому действие не по роли, значило бы отдать кампанию меньшему
+    # числу людей, чем распорядился человек, и никак об этом не сказать.
+    chosen = sorted({int(a) for a in accounts})
+    for account_id in chosen:
+        row = store.one(
+            "SELECT id, role FROM accounts WHERE id = ?", (account_id,)
+        )
+        if row is None:
+            raise ValueError(f"нет аккаунта {account_id} в реестре")
+        if row["role"] not in spec.roles:
+            raise ValueError(
+                f"аккаунту {account_id} нельзя {action}: у него роль "
+                f"{row['role']}, действие требует одну из {sorted(spec.roles)}"
+            )
+        if narrowed and row["role"] not in narrowed:
+            raise ValueError(
+                f"аккаунт {account_id} ({row['role']}) не входит в роли "
+                f"{narrowed}, до которых сужена кампания"
+            )
+
     if spec.needs_text and not template_id:
         raise ValueError(f"{action} требует текст — укажите шаблон")
     if template_id and not store.one(
@@ -296,21 +319,21 @@ def add_campaign(
     store.execute(
         "INSERT INTO campaigns(id, name, action, template_id, segment, mode, "
         "daily_cap, per_account_daily_cap, params, allow_repeat_contacts, "
-        "roles, ttl_hours, note, created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "roles, accounts, ttl_hours, note, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET name=excluded.name, action=excluded.action, "
         "template_id=excluded.template_id, segment=excluded.segment, "
         "mode=excluded.mode, daily_cap=excluded.daily_cap, "
         "per_account_daily_cap=excluded.per_account_daily_cap, "
         "params=excluded.params, "
         "allow_repeat_contacts=excluded.allow_repeat_contacts, "
-        "roles=excluded.roles, "
+        "roles=excluded.roles, accounts=excluded.accounts, "
         "ttl_hours=excluded.ttl_hours, note=excluded.note, "
         "updated_at=excluded.updated_at",
         (campaign_id, name, action, template_id, segment, mode, int(daily_cap),
          int(per_account_daily_cap), dumps(params or {}),
          1 if allow_repeat_contacts else 0, dumps(narrowed),
-         int(ttl_hours), note, now(), now()),
+         dumps(chosen), int(ttl_hours), note, now(), now()),
     )
     store.log(actor, "campaigns.upsert", campaign_id, f"{name} / {action}")
     store.commit()
@@ -337,4 +360,5 @@ def get_campaign(store: Store, campaign_id: str) -> dict | None:
     campaign = dict(row)
     campaign["params"] = loads(campaign.get("params"), {})
     campaign["roles"] = loads(campaign.get("roles"), [])
+    campaign["accounts"] = loads(campaign.get("accounts"), [])
     return campaign

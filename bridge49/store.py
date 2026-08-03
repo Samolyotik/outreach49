@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   -- роль решает не только допуск: `check_channel_dm_metadata` по контракту
   -- разрешён и отправителям каналов, но разведку каталога ведут читатели.
   roles          TEXT NOT NULL DEFAULT '[]',
+  -- Ещё уже: поимённый список аккаунтов. Роль отвечает на вопрос «кому это
+  -- вообще можно», список — на вопрос «кто именно этим занят». Нужен, чтобы
+  -- вести две разведки параллельно разными людьми, а не одну за другой.
+  accounts       TEXT NOT NULL DEFAULT '[]',
   ttl_hours      INTEGER NOT NULL DEFAULT 48,       -- request.expires_at
   note           TEXT,
   created_at     TEXT NOT NULL,
@@ -285,6 +289,9 @@ class Store:
         # ключом в params: params уезжают в Radar как параметры действия и
         # валидируются каталогом — чужой ключ там не пройдёт.
         ("campaigns", "roles", "TEXT NOT NULL DEFAULT '[]'"),
+        # Поимённый список аккаунтов кампании. Пусто — любой из подходящих
+        # по роли.
+        ("campaigns", "accounts", "TEXT NOT NULL DEFAULT '[]'"),
     )
 
     def _ensure_columns(self) -> None:

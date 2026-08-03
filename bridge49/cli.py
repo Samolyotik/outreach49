@@ -398,6 +398,7 @@ def cmd_campaigns(args) -> int:
                 params=json.loads(args.params) if args.params else None,
                 allow_repeat_contacts=bool(args.allow_repeat),
                 roles=args.role or (),
+                accounts=args.account or (),
                 actor=args.actor,
             )
             print(f"кампания {campaign['id']}: {campaign['name']}")
@@ -1085,6 +1086,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="писать и тем, кого уже касались (догоняющая волна)")
     p.add_argument("--role", action="append", choices=sorted(catalog.ROLES),
                    help="поручать только этой роли (можно повторять)")
+    p.add_argument("--account", action="append", type=int, metavar="ID",
+                   help="закрепить кампанию за конкретными аккаунтами "
+                        "(можно повторять)")
     p.add_argument("--note")
     p.add_argument("--id")
     p.add_argument("--status-of", metavar="CAMPAIGN_ID")
