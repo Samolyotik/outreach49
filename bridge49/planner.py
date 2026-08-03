@@ -27,15 +27,25 @@ def _tz(name: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
-def _jitter(rng: random.Random, limits: Limits, paced: bool) -> timedelta:
+def _jitter(
+    rng: random.Random, limits: Limits, paced: bool, reading: bool = False
+) -> timedelta:
     """Случайная добавка к слоту — всегда вверх, никогда вниз.
 
     Вниз нельзя: диспетчер проверяет минимальную паузу на выпуске, и слот,
     провалившийся под неё, был бы заблокирован и переигран. Вверх — просто
     убирает ровную сетку 15:00 / 15:15 / 15:30.
+
+    У чтения разброс свой: прежний контур задавал паузу диапазоном (240–360 с),
+    а не одним числом, и ровный шаг сам по себе выглядит машиной.
     """
-    span = int(getattr(limits, "per_account_visible_jitter_sec", 0) or 0)
-    if not paced or span <= 0:
+    if reading:
+        span = int(getattr(limits, "read_per_account_interval_jitter_sec", 0) or 0)
+    elif paced:
+        span = int(getattr(limits, "per_account_visible_jitter_sec", 0) or 0)
+    else:
+        return timedelta(0)
+    if span <= 0:
         return timedelta(0)
     return timedelta(seconds=rng.randint(0, span))
 
@@ -51,6 +61,7 @@ def _place(
     tz: ZoneInfo,
     paced: bool,
     rng: random.Random,
+    reading: bool = False,
 ) -> tuple[datetime, str] | tuple[None, None]:
     """Найти ближайший слот аккаунта, не превышающий дневной лимит.
 
@@ -58,8 +69,9 @@ def _place(
     вечером, кладёт задачи на завтра, и вчерашний счётчик к ним отношения не
     имеет. Если день уже забит — переходим к следующему.
     """
-    base = max(start, cursor.get(account_id, start)) + _jitter(rng, limits, paced)
-    slot = next_slot(base, limits, tz, paced=paced)
+    base = (max(start, cursor.get(account_id, start))
+            + _jitter(rng, limits, paced, reading))
+    slot = next_slot(base, limits, tz, paced=paced, reading=reading)
     for _ in range(30):  # месяц вперёд — дальше искать бессмысленно
         day = slot.date().isoformat()
         if used.get((account_id, day), 0) < cap:
@@ -70,36 +82,53 @@ def _place(
         # Разброс нужен и здесь: иначе все аккаунты, перенесённые на
         # следующий день, стартуют ровно в начало окна одной секундой.
         slot = next_slot(
-            next_slot(tomorrow, limits, tz, paced=paced)
-            + _jitter(rng, limits, paced),
-            limits, tz, paced=paced,
+            next_slot(tomorrow, limits, tz, paced=paced, reading=reading)
+            + _jitter(rng, limits, paced, reading),
+            limits, tz, paced=paced, reading=reading,
         )
     return None, None
 
 
-def next_slot(
-    after: datetime, limits: Limits, tz: ZoneInfo, *, paced: bool
-) -> datetime:
-    """Ближайший момент внутри окна отправки, не раньше `after`.
+def window_of(
+    limits: Limits, *, paced: bool, reading: bool = False
+) -> tuple[int, int, tuple[int, ...]] | None:
+    """Окно класса: (начало, конец, дни недели). `None` — окна нет.
 
-    Для непубличных `read`-действий окно не применяется: их никто не видит.
+    У рассылки оно узкое — рабочие часы и дни. У разведки шире и без выходных
+    (06:00–23:00, как в `work_calendar` прежнего контура): читателя никто не
+    видит, но аккаунт, перебирающий имена в четыре утра, на человека не похож.
     """
-    if not paced:
+    if paced:
+        return (limits.send_window_start_hour, limits.send_window_end_hour,
+                tuple(limits.send_weekdays))
+    if reading:
+        return (limits.read_window_start_hour, limits.read_window_end_hour,
+                tuple(limits.read_weekdays))
+    return None
+
+
+def next_slot(
+    after: datetime, limits: Limits, tz: ZoneInfo, *, paced: bool,
+    reading: bool = False,
+) -> datetime:
+    """Ближайший момент внутри окна класса, не раньше `after`."""
+    window = window_of(limits, paced=paced, reading=reading)
+    if window is None:
         return after
+    start, end, weekdays = window
     local = after.astimezone(tz)
     for _ in range(14):  # максимум две недели вперёд — дальше что-то не так
-        if local.weekday() in limits.send_weekdays:
-            if local.hour < limits.send_window_start_hour:
+        if local.weekday() in weekdays:
+            if local.hour < start:
                 local = local.replace(
-                    hour=limits.send_window_start_hour, minute=0, second=0,
-                    microsecond=0,
+                    hour=start, minute=0, second=0, microsecond=0,
                 )
-            if limits.send_window_start_hour <= local.hour < limits.send_window_end_hour:
+            if start <= local.hour < end:
                 return local.astimezone(timezone.utc)
         local = (local + timedelta(days=1)).replace(
-            hour=limits.send_window_start_hour, minute=0, second=0, microsecond=0
+            hour=start, minute=0, second=0, microsecond=0
         )
-    raise PlanError("не удалось найти окно отправки — проверьте limits.json")
+    raise PlanError("не удалось найти окно — проверьте limits.json")
 
 
 def _selector_for(contact: dict, action: catalog.Action) -> dict:
@@ -209,13 +238,22 @@ def plan(
 
     tz = _tz(timezone_name)
     paced = action.visible
+    # Чтение метаданных не видно собеседнику, но упирается в лимит resolve на
+    # стороне Telegram — свой потолок и свой шаг у него есть. Раскладываем по
+    # тем же числам, что проверит диспетчер: план, который заведомо не пройдёт
+    # преflight, — это не план, а очередь отказов.
+    reading = action.name in catalog.READ_ACTIONS
     per_account_cap = min(
         int(campaign["per_account_daily_cap"]) or 1,
-        limits.per_account_daily_visible if paced else 10_000,
+        limits.per_account_daily_visible if paced
+        else limits.read_per_account_daily if reading
+        else 10_000,
     )
-    interval = timedelta(
-        seconds=limits.per_account_visible_interval_sec if paced else 5
-    )
+    interval = timedelta(seconds=(
+        limits.per_account_visible_interval_sec if paced
+        else limits.read_per_account_interval_sec if reading
+        else 5
+    ))
 
     # Нагрузка учитывается по дню запланированного слота и по ВСЕМ незакрытым
     # состояниям. Считать «за сегодня» и только planned/queued нельзя: после
@@ -261,6 +299,7 @@ def plan(
             slot, day = _place(
                 candidate["id"], start=start, cursor=cursor, used=used,
                 cap=per_account_cap, limits=limits, tz=tz, paced=paced, rng=rng,
+                reading=reading,
             )
             if slot is not None:
                 account = candidate

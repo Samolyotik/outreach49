@@ -209,6 +209,15 @@ ACTIONS: dict[str, Action] = {
 #: Действия, которые вообще не обращаются к Telegram.
 NO_TELEGRAM_ACTIONS = frozenset({"command_dry_run", "gateway_capabilities"})
 
+#: Чтение, которое реально идёт в Telegram. У него нет риска для собеседника,
+#: но есть собственный лимит на стороне Telegram: resolve имени считается
+#: отдельно от отправки и не прощает залпа. Эхо (`command_dry_run`,
+#: `gateway_capabilities`) сюда не входит — оно не выходит за пределы Radar.
+READ_ACTIONS = frozenset(
+    name for name, action in ACTIONS.items()
+    if action.risk == RISK_READ and name not in NO_TELEGRAM_ACTIONS
+)
+
 #: Селекторные ключи, любой из которых открывает общий селектор.
 SELECTOR_KEYS = ("username", "chat_id", "supergroup_id", "user_id")
 

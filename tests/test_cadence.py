@@ -78,10 +78,10 @@ class CadenceTests(unittest.TestCase):
             self.add_task("reply_private_dm")
 
         self.assertEqual(
-            dispatcher.visible_sent_today(self.store, 821,
+            dispatcher.sent_today(self.store, 821,
                                           dispatcher.CADENCE_OUTREACH), 0)
         self.assertEqual(
-            dispatcher.visible_sent_today(self.store, 821,
+            dispatcher.sent_today(self.store, 821,
                                           dispatcher.CADENCE_REPLY), 5)
 
     def test_outreach_does_not_spend_the_reply_budget(self):
@@ -89,10 +89,10 @@ class CadenceTests(unittest.TestCase):
             self.add_task("send_private_dm")
 
         self.assertEqual(
-            dispatcher.visible_sent_today(self.store, 821,
+            dispatcher.sent_today(self.store, 821,
                                           dispatcher.CADENCE_REPLY), 0)
         self.assertEqual(
-            dispatcher.visible_sent_today(self.store, 821,
+            dispatcher.sent_today(self.store, 821,
                                           dispatcher.CADENCE_OUTREACH), 3)
 
     # -- паузы --------------------------------------------------------------
@@ -102,14 +102,14 @@ class CadenceTests(unittest.TestCase):
         self.add_task("reply_private_dm")
 
         self.assertIsNone(
-            dispatcher.last_visible_attempt_at(self.store, 821,
+            dispatcher.last_attempt_at(self.store, 821,
                                                dispatcher.CADENCE_OUTREACH))
 
     def test_a_campaign_send_still_holds_back_the_next_reply(self):
         """А вот ответ смотрит на любое действие: аккаунт-то один."""
         self.add_task("send_private_dm")
 
-        last = dispatcher.last_visible_attempt_at(self.store, 821,
+        last = dispatcher.last_attempt_at(self.store, 821,
                                                   dispatcher.CADENCE_REPLY)
         self.assertIsNotNone(last)
 
@@ -120,10 +120,10 @@ class CadenceTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(
-            dispatcher.global_next_visible_at(self.store,
+            dispatcher.global_next_at(self.store,
                                               dispatcher.CADENCE_OUTREACH))
         self.assertIsNone(
-            dispatcher.global_next_visible_at(self.store,
+            dispatcher.global_next_at(self.store,
                                               dispatcher.CADENCE_REPLY))
 
     # -- класс задачи -------------------------------------------------------

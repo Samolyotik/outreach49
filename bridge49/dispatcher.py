@@ -23,6 +23,7 @@ import asyncio
 import fcntl
 import random
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -45,6 +46,10 @@ from .store import Store, loads, now
 VISIBLE_ACTIONS = tuple(
     sorted(name for name, a in catalog.ACTIONS.items() if a.visible)
 )
+
+#: Чтение метаданных, которое реально идёт в Telegram, — в стабильном порядке
+#: для подстановки в SQL. Состав задаёт каталог.
+READ_ACTIONS = tuple(sorted(catalog.READ_ACTIONS))
 
 
 class DispatchBlocked(RuntimeError):
@@ -96,7 +101,7 @@ def exclusive(settings: Settings):
 
 
 def due_tasks(store: Store, *, campaign_id: str | None = None,
-              limit: int = 50) -> list[dict]:
+              cadence: str | None = None, limit: int = 50) -> list[dict]:
     """Задачи, которым пора: время пришло."""
     sql = (
         "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name, "
@@ -108,6 +113,10 @@ def due_tasks(store: Store, *, campaign_id: str | None = None,
     if campaign_id:
         sql += "AND t.campaign_id = ? "
         params.append(campaign_id)
+    if cadence:
+        actions = _cadence_actions(cadence)
+        sql += f"AND t.action IN ({','.join('?' * len(actions))}) "
+        params.extend(actions)
     sql += "ORDER BY t.scheduled_at, t.id LIMIT ?"
     params.append(int(limit))
 
@@ -117,7 +126,8 @@ def due_tasks(store: Store, *, campaign_id: str | None = None,
     return rows
 
 
-def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
+def orphaned(store: Store, *, campaign_id: str | None = None,
+             cadence: str | None = None) -> list[dict]:
     """Задачи с UUID, но без command_id — прошлый прогон оборвался.
 
     Кампанию джойним обязательно: UUID пишется ДО обращения к Radar, поэтому
@@ -135,6 +145,10 @@ def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
     if campaign_id:
         sql += "AND t.campaign_id = ? "
         params.append(campaign_id)
+    if cadence:
+        actions = _cadence_actions(cadence)
+        sql += f"AND t.action IN ({','.join('?' * len(actions))}) "
+        params.extend(actions)
     sql += "ORDER BY t.scheduled_at"
 
     out = []
@@ -151,32 +165,43 @@ def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
 #: сам, и потому не является первым касанием.
 CADENCE_OUTREACH = "outreach"
 CADENCE_REPLY = "reply"
+#: Третий класс: чтение метаданных. Собеседнику не видно ничего, но у Telegram
+#: свой счётчик на resolve, и он не смотрит на то, видно нам или нет.
+CADENCE_READ = "read"
 
 
 def cadence_of(task: dict) -> str:
     """К какому классу темпа относится задача."""
-    return (CADENCE_REPLY if task.get("action") in replies.REPLY_ACTIONS
-            else CADENCE_OUTREACH)
+    action = task.get("action")
+    if action in replies.REPLY_ACTIONS:
+        return CADENCE_REPLY
+    if action in READ_ACTIONS:
+        return CADENCE_READ
+    return CADENCE_OUTREACH
 
 
 def _cadence_actions(cadence: str) -> tuple[str, ...]:
     """Какие действия считаются в бюджете этого класса.
 
     Бюджеты раздельные: сорок автоответов за день не должны обнулить дневную
-    норму рассылки, а рассылка — лишить людей ответов.
+    норму рассылки, рассылка — лишить людей ответов, а разведка каталога — ни
+    того, ни другого.
     """
     if cadence == CADENCE_REPLY:
         return tuple(sorted(replies.REPLY_ACTIONS))
+    if cadence == CADENCE_READ:
+        return READ_ACTIONS
     return tuple(a for a in VISIBLE_ACTIONS if a not in replies.REPLY_ACTIONS)
 
 
-def visible_sent_today(
+def sent_today(
     store: Store, account_id: int, cadence: str = CADENCE_OUTREACH
 ) -> int:
-    """Сколько видимых действий аккаунт уже израсходовал за сегодня.
+    """Сколько действий этого класса аккаунт уже израсходовал за сегодня.
 
-    Считаем только видимые: read и soft собеседник не наблюдает, и лимит на
-    них не распространяется — значит и бюджет они тратить не должны.
+    Считаются видимые и чтения; `soft` (прочитано, «печатает») не считается
+    нигде — это не отдельный поход в Telegram, а довесок к действию, рядом с
+    которым он и стоит.
 
     Отказ моста расходует дневной бюджет наравне с удачной отправкой: со
     стороны Telegram это была попытка, и подставлять вместо неё следующую
@@ -196,10 +221,10 @@ def visible_sent_today(
     return int(row["n"])
 
 
-def last_visible_attempt_at(
+def last_attempt_at(
     store: Store, account_id: int, cadence: str = CADENCE_OUTREACH
 ) -> datetime | None:
-    """Когда аккаунт в последний раз обращался к мосту за видимым действием.
+    """Когда аккаунт в последний раз обращался к мосту за действием класса.
 
     Читаем отметку попытки, а не `scheduled_at`: пол меряется от факта
     обращения. Задача, пролежавшая в плане сутки, не даёт аккаунту права
@@ -211,7 +236,8 @@ def last_visible_attempt_at(
     полчаса. Ответ меряет от **любого** видимого действия: тут пол короткий,
     и нужен он ровно затем, чтобы аккаунт не выпустил два сообщения одной
     секундой — а с точки зрения Telegram аккаунт один, чем бы мы его ни
-    занимали.
+    занимали. Чтение меряет только от чтения: сообщение и resolve упираются
+    в разные лимиты, и заставлять разведку ждать отправку не за что.
     """
     actions = VISIBLE_ACTIONS if cadence == CADENCE_REPLY else _cadence_actions(cadence)
     placeholders = ",".join("?" * len(actions))
@@ -232,12 +258,13 @@ def last_visible_attempt_at(
 #: Ключ в `state`, хранящий момент, раньше которого не выпускает НИКТО.
 GLOBAL_NEXT_KEY = "global_next_visible_at"
 GLOBAL_NEXT_REPLY_KEY = "global_next_reply_at"
+GLOBAL_NEXT_READ_KEY = "global_next_read_at"
 
 
-def global_next_visible_at(
+def global_next_at(
     store: Store, cadence: str = CADENCE_OUTREACH
 ) -> datetime | None:
-    """Момент, раньше которого ни один аккаунт не выпускает видимое действие."""
+    """Момент, раньше которого ни один аккаунт не выпускает действие класса."""
     raw = store.get_state(_global_key(cadence), "") or ""
     if not raw:
         return None
@@ -249,7 +276,11 @@ def global_next_visible_at(
 
 def _global_key(cadence: str) -> str:
     """Своя пауза флота на класс: очередь ответов не стоит за рассылкой."""
-    return GLOBAL_NEXT_REPLY_KEY if cadence == CADENCE_REPLY else GLOBAL_NEXT_KEY
+    if cadence == CADENCE_REPLY:
+        return GLOBAL_NEXT_REPLY_KEY
+    if cadence == CADENCE_READ:
+        return GLOBAL_NEXT_READ_KEY
+    return GLOBAL_NEXT_KEY
 
 
 def _plan_global_pause(
@@ -262,6 +293,9 @@ def _plan_global_pause(
     if cadence == CADENCE_REPLY:
         low = max(0, int(limits.reply_global_interval_min_sec))
         high = max(low, int(limits.reply_global_interval_max_sec))
+    elif cadence == CADENCE_READ:
+        low = max(0, int(limits.read_global_interval_min_sec))
+        high = max(low, int(limits.read_global_interval_max_sec))
     else:
         low = max(0, int(limits.global_visible_interval_min_sec))
         high = max(low, int(limits.global_visible_interval_max_sec))
@@ -314,17 +348,24 @@ def inside_send_window(
     moment: datetime | None = None,
     cadence: str = CADENCE_OUTREACH,
 ) -> bool:
-    """Идёт ли сейчас окно отправки в рабочей таймзоне.
+    """Идёт ли сейчас окно этого класса в рабочей таймзоне.
 
-    У ответов окно своё и шире: оно про то, когда живой человек мог бы
-    ответить, а не про то, когда удобно вести кампанию. Написавший в субботу
-    вечером ждёт ответа, а не «мы вам в понедельник».
+    У каждого класса оно своё, и разница не косметическая. Ответ идёт
+    круглосуточно: он про то, когда живой человек мог бы ответить, а
+    написавший в субботу вечером ждёт ответа, а не «мы вам в понедельник».
+    Разведка — 06:00–23:00 без выходных: собеседник её не видит, но аккаунт,
+    перебирающий имена в четыре утра, виден Telegram, а выходных у поиска
+    нет. Рассылка — самое узкое окно, рабочие дни и часы.
     """
     limits = settings.limits
     if cadence == CADENCE_REPLY:
         start = limits.reply_window_start_hour
         end = limits.reply_window_end_hour
         weekdays = limits.reply_weekdays
+    elif cadence == CADENCE_READ:
+        start = limits.read_window_start_hour
+        end = limits.read_window_end_hour
+        weekdays = limits.read_weekdays
     else:
         start = limits.send_window_start_hour
         end = limits.send_window_end_hour
@@ -339,6 +380,58 @@ def inside_send_window(
     if local.weekday() not in weekdays:
         return False
     return start <= local.hour < end
+
+
+@dataclass(frozen=True)
+class Pace:
+    """Числа одного класса темпа и слова, которыми о нём говорят в отказе."""
+
+    daily_cap: int
+    interval_sec: int
+    global_low: int
+    global_high: int
+    #: «выпустил 13 ответов за сегодня»
+    noun: str
+    #: «аккаунт отправлял меньше 60 с назад»
+    verb: str
+    #: «сейчас вне окна разведки»
+    window_noun: str
+    window_start: int
+    window_end: int
+
+
+def _pace(settings: Settings, cadence: str) -> Pace:
+    """Собрать темп класса. Одно место, где числа сходятся со словами."""
+    limits = settings.limits
+    if cadence == CADENCE_REPLY:
+        return Pace(
+            daily_cap=int(limits.reply_per_account_daily),
+            interval_sec=int(limits.reply_per_account_interval_sec or 0),
+            global_low=int(limits.reply_global_interval_min_sec),
+            global_high=int(limits.reply_global_interval_max_sec),
+            noun="ответов", verb="отвечал", window_noun="ответов",
+            window_start=int(limits.reply_window_start_hour),
+            window_end=int(limits.reply_window_end_hour),
+        )
+    if cadence == CADENCE_READ:
+        return Pace(
+            daily_cap=int(limits.read_per_account_daily),
+            interval_sec=int(limits.read_per_account_interval_sec or 0),
+            global_low=int(limits.read_global_interval_min_sec),
+            global_high=int(limits.read_global_interval_max_sec),
+            noun="чтений метаданных", verb="читал", window_noun="разведки",
+            window_start=int(limits.read_window_start_hour),
+            window_end=int(limits.read_window_end_hour),
+        )
+    return Pace(
+        daily_cap=int(limits.per_account_daily_visible),
+        interval_sec=int(limits.per_account_visible_interval_sec or 0),
+        global_low=int(limits.global_visible_interval_min_sec),
+        global_high=int(limits.global_visible_interval_max_sec),
+        noun="видимых действий", verb="отправлял", window_noun="отправки",
+        window_start=int(limits.send_window_start_hour),
+        window_end=int(limits.send_window_end_hour),
+    )
 
 
 def preflight(
@@ -392,23 +485,19 @@ def preflight(
             )
 
     cadence = cadence_of(task)
+    pace = _pace(settings, cadence)
+
+    # Окно проверяется ещё раз здесь, а не только при планировании: задача
+    # могла пролежать в очереди до ночи из-за паузы или сбоя.
+    if (action.visible or cadence == CADENCE_READ) and not inside_send_window(
+        settings, cadence=cadence
+    ):
+        raise DispatchBlocked(
+            f"сейчас вне окна {pace.window_noun} "
+            f"({pace.window_start}:00–{pace.window_end}:00 {settings.timezone})"
+        )
 
     if action.visible:
-        # Окно проверяется ещё раз здесь, а не только при планировании:
-        # задача могла пролежать в очереди до ночи из-за паузы или сбоя.
-        if not inside_send_window(settings, cadence=cadence):
-            start, end = (
-                (settings.limits.reply_window_start_hour,
-                 settings.limits.reply_window_end_hour)
-                if cadence == CADENCE_REPLY
-                else (settings.limits.send_window_start_hour,
-                      settings.limits.send_window_end_hour)
-            )
-            raise DispatchBlocked(
-                f"сейчас вне окна {'ответов' if cadence == CADENCE_REPLY else 'отправки'} "
-                f"({start}:00–{end}:00 {settings.timezone})"
-            )
-
         # Одному человеку — одно первое касание, даже если кампаний несколько.
         # Уникальность в tasks держит только пару (кампания, контакт), поэтому
         # второй сегмент, пересекающийся с первым, без этой проверки написал бы
@@ -428,38 +517,31 @@ def preflight(
                     "поставьте кампании allow_repeat_contacts"
                 )
 
+    # Дальше — темп. Он касается и видимых действий, и чтения: у первых цена
+    # ошибки — человек, получивший залп, у второго — FLOOD_WAIT на resolve.
+    # Не касается только `soft`: оно едет прицепом к своему действию.
+    if action.visible or cadence == CADENCE_READ:
         # Пауза поперёк флота: аккаунтов много, и без неё их отправки
         # складываются в залп, даже когда каждый по отдельности выдержал свой
         # интервал. Предпросмотр её не применяет — он отвечает на вопрос «что
         # уйдёт за прогон», а уйдёт всё, просто с паузами между отправками.
-        blocked_until = (global_next_visible_at(store, cadence)
+        blocked_until = (global_next_at(store, cadence)
                          if enforce_global_pause else None)
         if blocked_until is not None:
             wait = (blocked_until - datetime.now(timezone.utc)).total_seconds()
             if wait > 0:
-                low, high = (
-                    (settings.limits.reply_global_interval_min_sec,
-                     settings.limits.reply_global_interval_max_sec)
-                    if cadence == CADENCE_REPLY
-                    else (settings.limits.global_visible_interval_min_sec,
-                          settings.limits.global_visible_interval_max_sec)
-                )
                 raise DispatchTooEarly(
-                    f"по флоту только что отправляли — ждём ещё {int(wait) + 1} с "
-                    f"(пауза {low}–{high} с)",
+                    f"по флоту только что {pace.verb} — ждём ещё {int(wait) + 1} с "
+                    f"(пауза {pace.global_low}–{pace.global_high} с)",
                     wait_seconds=int(wait) + 1,
                 )
 
-        daily_cap = (settings.limits.reply_per_account_daily
-                     if cadence == CADENCE_REPLY
-                     else settings.limits.per_account_daily_visible)
-        already = visible_sent_today(store, account_id, cadence)
+        already = sent_today(store, account_id, cadence)
         already += int((spent or {}).get(account_id, 0))
-        if already >= daily_cap:
+        if already >= pace.daily_cap:
             raise DispatchBlocked(
-                f"аккаунт уже выпустил {already} "
-                f"{'ответов' if cadence == CADENCE_REPLY else 'видимых действий'} "
-                f"за сегодня (лимит {daily_cap})"
+                f"аккаунт уже выпустил {already} {pace.noun} за сегодня "
+                f"(лимит {pace.daily_cap})"
             )
 
         # Пауза между отправками проверяется здесь, а не только при
@@ -467,22 +549,20 @@ def preflight(
         # попадают и мимо него: повторный plan, вторая кампания на тот же
         # сегмент, импорт, правка руками. Пол должен держать в любом из этих
         # случаев, иначе весь пакет уедет одной секундой.
-        interval = int(
-            (settings.limits.reply_per_account_interval_sec
-             if cadence == CADENCE_REPLY
-             else settings.limits.per_account_visible_interval_sec) or 0
-        )
-        if interval > 0:
-            last = last_visible_attempt_at(store, account_id, cadence)
+        if pace.interval_sec > 0:
+            last = last_attempt_at(store, account_id, cadence)
             simulated = (recent or {}).get(account_id)
             if simulated is not None and (last is None or simulated > last):
                 last = simulated
             if last is not None:
                 moment = datetime.now(timezone.utc)
-                wait = int((last + timedelta(seconds=interval) - moment).total_seconds())
+                wait = int(
+                    (last + timedelta(seconds=pace.interval_sec) - moment)
+                    .total_seconds()
+                )
                 if wait > 0:
                     raise DispatchBlocked(
-                        f"аккаунт отправлял меньше {interval} с назад — "
+                        f"аккаунт {pace.verb} меньше {pace.interval_sec} с назад — "
                         f"ждём ещё {wait} с"
                     )
 
@@ -518,6 +598,7 @@ async def dispatch(
     settings: Settings,
     *,
     campaign_id: str | None = None,
+    cadence: str | None = None,
     limit: int | None = None,
     confirm: bool = False,
     actor: str = "cli",
@@ -526,16 +607,21 @@ async def dispatch(
 
     Без `confirm` и без файла ARMED ничего не отправляется — возвращается
     предпросмотр, ровно тот же список, который ушёл бы в боевом режиме.
+
+    ``cadence`` сужает выпуск до одного класса. Это нужно таймеру разведки:
+    без сужения он выпускал бы заодно всё созревшее в рассылочных кампаниях,
+    а рассылка здесь по решению владельца остаётся на ручном управлении.
     """
     limit = int(limit or settings.limits.dispatch_batch)
     armed = settings.armed
     if confirm and armed:
         with exclusive(settings):
             return await _dispatch_armed(
-                store, settings, campaign_id=campaign_id, limit=limit, actor=actor
+                store, settings, campaign_id=campaign_id, cadence=cadence,
+                limit=limit, actor=actor,
             )
-    return _preview(store, settings, campaign_id=campaign_id, limit=limit,
-                    armed=armed, confirmed=confirm)
+    return _preview(store, settings, campaign_id=campaign_id, cadence=cadence,
+                    limit=limit, armed=armed, confirmed=confirm)
 
 
 def _mark_attempt(
@@ -551,16 +637,18 @@ def _mark_attempt(
         "UPDATE tasks SET attempted_at = ?, updated_at = ? WHERE id = ?",
         (now(), now(), task["id"]),
     )
-    if visible:
-        cadence = cadence_of(task)
+    cadence = cadence_of(task)
+    if visible or cadence == CADENCE_READ:
         store.set_state(_global_key(cadence),
                         _plan_global_pause(settings, cadence=cadence))
     store.commit()
 
 
-def _queue(store: Store, campaign_id: str | None, limit: int) -> list[dict]:
-    pending = orphaned(store, campaign_id=campaign_id)
-    fresh = due_tasks(store, campaign_id=campaign_id, limit=limit)
+def _queue(store: Store, campaign_id: str | None, limit: int,
+           cadence: str | None = None) -> list[dict]:
+    pending = orphaned(store, campaign_id=campaign_id, cadence=cadence)
+    fresh = due_tasks(store, campaign_id=campaign_id, cadence=cadence,
+                      limit=limit)
     seen = {task["id"] for task in pending}
     # Оборванные с прошлого раза идут первыми: их надо доиграть тем же UUID.
     return (pending + [t for t in fresh if t["id"] not in seen])[:limit]
@@ -568,14 +656,14 @@ def _queue(store: Store, campaign_id: str | None, limit: int) -> list[dict]:
 
 def _preview(
     store: Store, settings: Settings, *, campaign_id: str | None, limit: int,
-    armed: bool, confirmed: bool,
+    armed: bool, confirmed: bool, cadence: str | None = None,
 ) -> dict:
     spent: dict[int, int] = {}
     recent: dict[int, datetime] = {}
     touched: set[str] = set()
     ready: list[dict] = []
     blocked: list[dict] = []
-    for task in _queue(store, campaign_id, limit):
+    for task in _queue(store, campaign_id, limit, cadence):
         try:
             action = preflight(
                 store, task, settings, spent=spent, recent=recent,
@@ -584,12 +672,13 @@ def _preview(
         except DispatchBlocked as exc:
             blocked.append({"task": task["id"], "why": str(exc)})
             continue
-        if action.visible:
+        if action.visible or cadence_of(task) == CADENCE_READ:
             account_id = int(task["account_id"])
             spent[account_id] = spent.get(account_id, 0) + 1
             # Весь батч ушёл бы одним прогоном, то есть «сейчас».
             recent[account_id] = datetime.now(timezone.utc)
-            touched.add(str(task["contact_id"]))
+            if action.visible:
+                touched.add(str(task["contact_id"]))
         ready.append(task)
 
     return {
@@ -605,9 +694,9 @@ def _preview(
 
 async def _dispatch_armed(
     store: Store, settings: Settings, *, campaign_id: str | None, limit: int,
-    actor: str,
+    actor: str, cadence: str | None = None,
 ) -> dict:
-    queue = _queue(store, campaign_id, limit)
+    queue = _queue(store, campaign_id, limit, cadence)
     sent = 0
     blocked: list[dict] = []
     failed: list[dict] = []

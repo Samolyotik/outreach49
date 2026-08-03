@@ -662,7 +662,7 @@ class DailyCapTests(unittest.TestCase):
             "dispatched_at=strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), state='done'"
         )
         self.store.commit()
-        self.assertEqual(dispatcher.visible_sent_today(self.store, 821), 0)
+        self.assertEqual(dispatcher.sent_today(self.store, 821), 0)
 
 
 class SendWindowAtDispatchTests(unittest.TestCase):
@@ -1167,8 +1167,8 @@ class PaceFloorTests(unittest.TestCase):
 
     def test_pause_is_measured_per_account(self):
         run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
-        self.assertIsNotNone(dispatcher.last_visible_attempt_at(self.store, 821))
-        self.assertIsNone(dispatcher.last_visible_attempt_at(self.store, 803))
+        self.assertIsNotNone(dispatcher.last_attempt_at(self.store, 821))
+        self.assertIsNone(dispatcher.last_attempt_at(self.store, 803))
 
     def test_zero_interval_disables_the_pause(self):
         self.settings.limits.per_account_visible_interval_sec = 0
@@ -1390,7 +1390,7 @@ class FleetPaceTests(unittest.TestCase):
 
     def test_pause_survives_the_run(self):
         run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
-        self.assertIsNotNone(dispatcher.global_next_visible_at(self.store))
+        self.assertIsNotNone(dispatcher.global_next_at(self.store))
 
     def test_absurd_pause_defers_instead_of_sleeping(self):
         self.settings.limits.global_visible_interval_min_sec = 3600
@@ -1520,7 +1520,7 @@ class FailedAttemptTests(unittest.TestCase):
     def test_attempt_counts_towards_the_daily_budget(self):
         bridge = FakeEnqueueBridge(error=radar.BridgeRejected("нельзя"))
         run_dispatch(self.store, self.settings, bridge, confirm=True)
-        self.assertEqual(dispatcher.visible_sent_today(self.store, 821), 1)
+        self.assertEqual(dispatcher.sent_today(self.store, 821), 1)
 
     def test_unknown_outcome_also_records_the_touch(self):
         bridge = FakeEnqueueBridge(error=radar.BridgeUnknown("таймаут"))

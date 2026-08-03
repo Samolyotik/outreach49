@@ -149,6 +149,46 @@ class Limits:
     reply_delay_after_inbound_min_sec: int = 10
     reply_delay_after_inbound_max_sec: int = 30
 
+    # -- чтение метаданных --------------------------------------------------
+    #
+    # Разведка ничего не показывает собеседнику, и по этой причине ни один
+    # темп на неё до сих пор не распространялся: ни наш — `preflight` пропускал
+    # read мимо всех проверок, — ни Radar, где паcятся только `visible` и
+    # `mature_dm`. Между тем `search_public_chat` и вся семья `check_*` — это
+    # resolve имени в Telegram, а у него собственный лимит, никак не связанный
+    # с видимостью. Исполнитель Radar берёт по одной команде за тик, то есть
+    # до одной в секунду на аккаунт, и пачка созревших задач ушла бы именно с
+    # такой скоростью — прямиком в FLOOD_WAIT.
+    #
+    # Поэтому у чтения свой класс темпа. Смотрит класс только на себя: read не
+    # отнимает права у рассылки и не ждёт её — Telegram считает эти лимиты
+    # порознь.
+    #
+    # Числа не выдуманы, а взяты у прежнего контура: профиль `standard` из
+    # `configs/account_task_speeds.json`, роль `source_reader`. Он там же и
+    # отработан — 17.07 пять читателей сделали 415 проверок за девять часов,
+    # то есть ровно одну на 76 секунд по флоту. Своих чисел здесь быть не
+    # должно: разведка ходит теми же RPC и упирается в тот же лимит.
+
+    #: Сколько чтений метаданных на аккаунт в сутки. Их `daily_cap_per_account`.
+    read_per_account_daily: int = 100
+    #: Пол между чтениями одного аккаунта, сек. Их `per_account_gap_min`.
+    read_per_account_interval_sec: int = 240
+    #: Разброс поверх пола при планировании: их gap — диапазон 240–360, и
+    #: ровный шаг в 240 сам по себе выглядит машиной.
+    read_per_account_interval_jitter_sec: int = 120
+    #: Пауза между чтениями разных аккаунтов, сек. Их `global_gap`.
+    read_global_interval_min_sec: int = 60
+    read_global_interval_max_sec: int = 90
+    #: Окно разведки. Оно у прежнего контура было — `work_calendar` в обоих
+    #: боевых конфигах: 06:00–23:00 МСК, все семь дней. Собеседник чтения не
+    #: видит, но Telegram видит аккаунт, который перебирает имена в четыре
+    #: утра, — а живой человек в это время спит. Выходных при этом нет:
+    #: разведка не рассылка, ей незачем притворяться рабочей неделей.
+    read_window_start_hour: int = 6
+    read_window_end_hour: int = 23
+    read_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
+
 
 #: Жёсткий пол. `limits.json` может делать темп СТРОЖЕ и только строже.
 #:
@@ -175,6 +215,17 @@ HARD_MIN_REPLY_GLOBAL_INTERVAL_SEC = 2
 #: бессмысленные значения (перевёрнутое или вышедшее за сутки окно).
 HARD_REPLY_WINDOW_START_HOUR = 0
 HARD_REPLY_WINDOW_END_HOUR = 24
+
+#: Пол для чтения. Окна у него нет — разведку никто не наблюдает, и ночной
+#: запрет означал бы только то, что сутки простаивают впустую. А вот скорость
+#: ограничена жёстко, и это ровно та огибающая, внутри которой прежний контур
+#: держал все три своих профиля: быстрее «fast» не пускаем никого. Сто чтений
+#: в сутки — их `daily_cap_per_account_max`, и это потолок, а не умолчание.
+HARD_MAX_READ_DAILY = 100
+HARD_MIN_READ_INTERVAL_SEC = 240
+HARD_MIN_READ_GLOBAL_INTERVAL_SEC = 60
+HARD_READ_WINDOW_START_HOUR = 6
+HARD_READ_WINDOW_END_HOUR = 23
 
 
 def clamp(limits: Limits) -> list[str]:
@@ -275,6 +326,45 @@ def clamp(limits: Limits) -> list[str]:
         fix("reply_delay_after_inbound_max_sec",
             int(limits.reply_delay_after_inbound_min_sec),
             "верхняя граница ниже нижней")
+
+    # -- тот же пол для чтения ----------------------------------------------
+
+    read_daily = int(limits.read_per_account_daily)
+    if read_daily > HARD_MAX_READ_DAILY:
+        fix("read_per_account_daily", HARD_MAX_READ_DAILY,
+            f"пол: не больше {HARD_MAX_READ_DAILY} чтений в сутки на аккаунт")
+    elif read_daily < 0:
+        fix("read_per_account_daily", 0, "отрицательный лимит")
+
+    if int(limits.read_per_account_interval_sec) < HARD_MIN_READ_INTERVAL_SEC:
+        fix("read_per_account_interval_sec", HARD_MIN_READ_INTERVAL_SEC,
+            f"пол: между чтениями не меньше {HARD_MIN_READ_INTERVAL_SEC} с")
+
+    if int(limits.read_per_account_interval_jitter_sec) < 0:
+        fix("read_per_account_interval_jitter_sec", 0, "отрицательный разброс")
+
+    if int(limits.read_global_interval_min_sec) < HARD_MIN_READ_GLOBAL_INTERVAL_SEC:
+        fix("read_global_interval_min_sec", HARD_MIN_READ_GLOBAL_INTERVAL_SEC,
+            f"пол: между чтениями разных аккаунтов не меньше "
+            f"{HARD_MIN_READ_GLOBAL_INTERVAL_SEC} с")
+    if int(limits.read_global_interval_max_sec) < limits.read_global_interval_min_sec:
+        fix("read_global_interval_max_sec",
+            int(limits.read_global_interval_min_sec),
+            "верхняя граница ниже нижней")
+
+    if int(limits.read_window_start_hour) < HARD_READ_WINDOW_START_HOUR:
+        fix("read_window_start_hour", HARD_READ_WINDOW_START_HOUR,
+            f"пол: разведка не раньше {HARD_READ_WINDOW_START_HOUR}:00")
+    if int(limits.read_window_end_hour) > HARD_READ_WINDOW_END_HOUR:
+        fix("read_window_end_hour", HARD_READ_WINDOW_END_HOUR,
+            f"пол: разведка не позже {HARD_READ_WINDOW_END_HOUR}:00")
+    if limits.read_window_end_hour <= limits.read_window_start_hour:
+        fix("read_window_end_hour", HARD_READ_WINDOW_END_HOUR, "окно схлопнулось")
+
+    read_days = tuple(sorted({int(d) for d in limits.read_weekdays if 0 <= int(d) <= 6}))
+    if read_days != tuple(limits.read_weekdays):
+        notes.append(f"read_weekdays: {tuple(limits.read_weekdays)} → {read_days}")
+        limits.read_weekdays = read_days
 
     return notes
 

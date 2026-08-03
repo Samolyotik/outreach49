@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import accounts as accounts_mod
 from . import (alerts, autoreply, catalog, config, dispatcher, entities,
-               planner, pollers, replies, report, watchdog)
+               planner, pollers, replies, report, research, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -268,6 +268,7 @@ def cmd_contacts(args) -> int:
             contact = entities.add_contact(
                 store, username=args.add, display_name=args.name,
                 company=args.company, segment=args.segment,
+                kind=args.kind, peer_kind=args.peer_kind,
                 tags=args.tag or (), actor=args.actor,
             )
             print(f"контакт {contact['id']}: @{contact['username']}")
@@ -467,6 +468,35 @@ def cmd_queue(args) -> int:
     return 0
 
 
+def cmd_sources(args) -> int:
+    """Что выяснила разведка: результаты чтений метаданных одной таблицей."""
+    settings = _settings(args)
+    with _store(settings) as store:
+        records = research.rows(
+            store, campaign_id=args.campaign, state=args.state,
+            limit=args.limit,
+        )
+        if args.verdict:
+            records = [r for r in records if r["verdict"] == args.verdict]
+
+        if args.csv:
+            count = research.export(records, args.csv)
+            print(report.good(f"выгружено строк: {count} → {args.csv}"))
+            print(report.warn(
+                "Колонки username / tg_id / kind понимает `contacts --import`: "
+                "отфильтруйте файл и заведите из него сегмент."
+            ))
+            return 0
+
+        columns = research.COLUMNS if args.full else research.NARROW
+        print(report.table(
+            [{research.HEADERS[c]: r.get(c) for c in columns} for r in records]
+        ))
+        print()
+        print(report.kv(research.summary(records)))
+    return 0
+
+
 def cmd_dispatch(args) -> int:
     settings = _settings(args, need_dsn=args.confirm)
     with _store(settings) as store:
@@ -477,6 +507,7 @@ def cmd_dispatch(args) -> int:
         try:
             result = asyncio.run(dispatcher.dispatch(
                 store, settings, campaign_id=args.campaign, limit=args.limit,
+                cadence=dispatcher.CADENCE_READ if args.read else None,
                 confirm=args.confirm, actor=args.actor,
             ))
         except dispatcher.DispatchBusy as exc:
@@ -970,6 +1001,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--name")
     p.add_argument("--company")
     p.add_argument("--segment", default="default")
+    # Цель разведки — не человек, а чат или канал. Раньше это умел только
+    # импорт CSV, и завести одну цель руками было нечем.
+    p.add_argument("--kind", default="user", choices=sorted(entities.CONTACT_KINDS))
+    p.add_argument("--peer-kind", dest="peer_kind",
+                   choices=sorted(catalog.PEER_KINDS))
     p.add_argument("--tag", action="append")
     p.add_argument("--import", dest="import_csv", metavar="CSV")
     p.add_argument("--opt-out", metavar="CONTACT_ID")
@@ -1017,8 +1053,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=50)
     p.set_defaults(func=cmd_queue)
 
+    p = sub.add_parser("sources", help="что выяснила разведка о чатах и каналах")
+    p.add_argument("--campaign")
+    p.add_argument("--state")
+    p.add_argument("--verdict", help="оставить только один вердикт")
+    p.add_argument("--csv", metavar="PATH", help="выгрузить в файл вместо экрана")
+    p.add_argument("--full", action="store_true", help="все колонки на экран")
+    p.add_argument("--limit", type=int, default=200)
+    p.set_defaults(func=cmd_sources)
+
     p = sub.add_parser("dispatch", help="выпустить созревшие задачи в Radar")
     p.add_argument("--campaign")
+    p.add_argument("--read", action="store_true",
+                   help="только чтения метаданных, рассылку не трогать")
     p.add_argument("--limit", type=int)
     p.add_argument("--confirm", action="store_true",
                    help="реально поставить команды (нужен ещё и режим arm on)")
