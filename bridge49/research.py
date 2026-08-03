@@ -33,6 +33,11 @@ READ_ACTIONS = (
     "search_public_chat",
 )
 
+#: Состояния, в которых у задачи уже есть что показать. Запланированные в
+#: отчёт не идут: «вердикт: planned» шесть тысяч раз — это не отчёт, а план,
+#: и смотреть на него надо командой `queue`.
+FINISHED = ("done", "failed", "skipped", "blocked")
+
 #: Порядок колонок в выгрузке и на экране.
 COLUMNS = (
     "username", "title", "kind", "verdict", "participants", "tg_id",
@@ -158,6 +163,9 @@ def rows(
     if state:
         sql += "AND t.state = ? "
         params.append(state)
+    else:
+        sql += f"AND t.state IN ({','.join('?' * len(FINISHED))}) "
+        params.extend(FINISHED)
     sql += "ORDER BY COALESCE(t.finished_at, t.dispatched_at) DESC, t.id LIMIT ?"
     params.append(int(limit))
 
