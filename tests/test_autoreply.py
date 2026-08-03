@@ -309,3 +309,97 @@ class AutoReplyRunTests(unittest.TestCase):
             datetime.fromisoformat(first),
             datetime.fromisoformat(str(inbound["created_at"])),
         )
+
+
+class LlmBoundaryTests(unittest.TestCase):
+    """Граница с моделью — внешняя команда: JSON на stdin, JSON на stdout.
+
+    Модель здесь поддельная, но путь настоящий: подпроцесс, разбор ответа,
+    проверки контракта, постановка в очередь.
+    """
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+
+        contact = entities.add_contact(self.store, username="someone",
+                                       segment="inbound", actor="test")
+        thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (thread_id, contact["id"], now(), now()),
+        )
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, raw, created_at) "
+            "VALUES(7001,821,'private_dm','@someone','someone',?,'{}',?)",
+            ("Сколько стоит?", now()),
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def fake_model(self, payload: str) -> str:
+        """Скрипт-заглушка в роли OUTREACH_LLM_COMMAND."""
+        path = Path(self.tmp.name) / "model.py"
+        path.write_text(
+            "import sys, json\n"
+            "sys.stdin.read()\n"
+            f"sys.stdout.write({payload!r})\n",
+            encoding="utf-8",
+        )
+        return f"{sys.executable} {path}"
+
+    def test_a_good_answer_travels_all_the_way_to_the_queue(self):
+        answer = json.dumps({
+            "action": "reply",
+            "intent": "pricing_question",
+            "reply_text": "Тарифы от 29 000 ₽. Показать бесплатный тест?",
+            "confidence": 0.9, "risk_level": "low",
+            "next_state": "FAQ automation", "handoff_reason": "",
+            "handoff_kind": "none", "matched_direct_invite_sector_id": "",
+            "knowledge_gap": "", "collected_fields_update": {},
+            "coverage_complete": True, "reason": "",
+            "turn_items": [{
+                "item_id": "1", "topic": "pricing", "user_item": "цена",
+                "user_evidence": "Сколько стоит", "status": "answered",
+                "answer_summary": "назвал тарифы",
+                "reply_evidence": "Тарифы от 29 000 ₽",
+                "source_ids": ["v1:answer_cards/pricing.md"],
+            }],
+        }, ensure_ascii=False)
+
+        result = autoreply.run(self.store, self.settings,
+                               command=self.fake_model(answer))
+
+        self.assertEqual(result["queued"], 1, result)
+        task = self.store.one("SELECT * FROM tasks WHERE campaign_id = ?",
+                              (replies.AUTO_CAMPAIGN_ID,))
+        self.assertIn("29 000", json.loads(task["params"])["text"])
+
+    def test_a_broken_model_answer_sends_nothing(self):
+        """Мусор вместо JSON не должен превращаться в сообщение человеку."""
+        result = autoreply.run(self.store, self.settings,
+                               command=self.fake_model("это не json"))
+
+        self.assertEqual(result["queued"], 0, result)
+        self.assertIsNone(
+            self.store.one("SELECT * FROM tasks WHERE campaign_id = ?",
+                           (replies.AUTO_CAMPAIGN_ID,))
+        )
+        card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
+        self.assertIsNotNone(card, "должна остаться карточка менеджеру")
