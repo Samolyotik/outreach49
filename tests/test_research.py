@@ -159,7 +159,54 @@ class ReadCadenceTests(unittest.TestCase):
 
         with self.assertRaises(dispatcher.DispatchBlocked) as caught:
             dispatcher.preflight(self.store, self.pending(), self.settings)
-        self.assertIn("читал меньше", str(caught.exception))
+        self.assertIn("читал", str(caught.exception))
+
+    def test_the_pause_is_drawn_and_remembered(self):
+        """Сто в сутки — это одна проверка в 864 секунды.
+
+        С фиксированным полом аккаунт отстрелял бы сотню за семь часов и
+        семнадцать стоял. Пауза разыгрывается в диапазоне и запоминается по
+        аккаунту, поэтому ритм остаётся неровным и на накопившемся долге —
+        когда все задачи уже просрочены и «время последней попытки» ничего не
+        ограничивает.
+        """
+        limits = self.settings.limits
+        drawn = set()
+        for _ in range(40):
+            moment = dispatcher._plan_account_read_pause(self.settings, 801)
+            # «Сейчас» в диспетчере заморожено — считаем от того же момента.
+            delay = (datetime.fromisoformat(moment) - MIDDAY).total_seconds()
+            drawn.add(round(delay))
+
+        self.assertGreaterEqual(min(drawn), limits.read_per_account_interval_sec - 1)
+        self.assertLessEqual(
+            max(drawn),
+            limits.read_per_account_interval_sec
+            + limits.read_per_account_interval_jitter_sec + 1,
+        )
+        # Разброс должен быть широким, а не косметическим.
+        self.assertGreater(max(drawn) - min(drawn),
+                           limits.read_per_account_interval_jitter_sec / 2)
+
+    def test_the_remembered_pause_stops_the_next_read(self):
+        self.store.set_state(
+            dispatcher._account_read_key(801),
+            (MIDDAY + timedelta(seconds=700)).isoformat(),
+        )
+
+        with self.assertRaises(dispatcher.DispatchBlocked) as caught:
+            dispatcher.preflight(self.store, self.pending(), self.settings)
+        self.assertIn("следующее чтение через", str(caught.exception))
+
+    def test_a_hundred_a_day_spreads_over_a_day(self):
+        """Средняя пауза должна укладывать суточную норму ровно в сутки."""
+        limits = Limits()
+        average = (limits.read_per_account_interval_sec
+                   + limits.read_per_account_interval_jitter_sec / 2)
+
+        per_day = 86400 / average
+
+        self.assertAlmostEqual(per_day, limits.read_per_account_daily, delta=6)
 
     def test_an_old_read_does_not_hold_anything_back(self):
         self.add_task("check_channel_dm_metadata",
@@ -205,33 +252,41 @@ class ReadCadenceTests(unittest.TestCase):
 
         self.assertEqual(action.risk, catalog.RISK_READ)
 
-    def test_the_numbers_are_the_ones_the_old_contour_proved(self):
-        """Профиль `standard`, роль `source_reader`, прежний контур.
+    def test_the_numbers_that_came_from_the_old_contour(self):
+        """Что взято у прежнего контура дословно, а что осознанно нет.
 
-        Числа сверены с `configs/account_task_speeds.json` на боевом сервере и
-        с тем, как контур ходил на самом деле: 17.07 пять читателей сделали
-        415 проверок за девять часов — одна на 76 секунд по флоту. Свои числа
-        здесь заводить нельзя: RPC те же, лимит тот же.
+        Сверено с `configs/account_task_speeds.json` на боевом сервере (роль
+        `source_reader`, профиль `standard`) и с тем, как контур ходил на самом
+        деле: 17.07 пять читателей сделали 415 проверок за девять часов — одна
+        на 76 секунд по флоту.
         """
         limits = Limits()
 
+        # Дословно их: суточная норма и пауза поперёк флота.
         self.assertEqual(limits.read_per_account_daily, 100)
-        self.assertEqual(limits.read_per_account_interval_sec, 240)
+        self.assertEqual(limits.read_global_interval_min_sec, 60)
+        self.assertEqual(limits.read_global_interval_max_sec, 90)
+        self.assertEqual(config.HARD_MAX_READ_DAILY, 100)
+        self.assertEqual(config.HARD_MIN_READ_GLOBAL_INTERVAL_SEC, 60)
+
+        # Осознанно не их — и то, и другое про распределение по суткам.
+        #
+        # Окно: у них 06:00–23:00 (`work_calendar`), у нас круглосуточно по
+        # решению владельца от 03.08.2026.
+        self.assertEqual(limits.read_window_start_hour, 0)
+        self.assertEqual(limits.read_window_end_hour, 24)
+        # Пауза аккаунта: у них 240–360 с, у нас 540–1200. Их короткая пауза
+        # жила внутри дневной сессии с координатором, который сам решал, когда
+        # аккаунту начинать и заканчивать. У нас сессий нет, и ту же сотню надо
+        # разложить на полные сутки — иначе она уйдёт за семь часов.
+        self.assertEqual(limits.read_per_account_interval_sec, 540)
         self.assertEqual(
             limits.read_per_account_interval_sec
             + limits.read_per_account_interval_jitter_sec,
-            360,
+            1200,
         )
-        self.assertEqual(limits.read_global_interval_min_sec, 60)
-        self.assertEqual(limits.read_global_interval_max_sec, 90)
-        # Окно — единственное, что мы у них НЕ взяли: у них 06:00-23:00,
-        # у нас круглосуточно по решению владельца от 03.08.2026.
-        self.assertEqual(limits.read_window_start_hour, 0)
-        self.assertEqual(limits.read_window_end_hour, 24)
-        # Огибающая всех трёх их профилей: быстрее «fast» не пускаем никого.
-        self.assertEqual(config.HARD_MAX_READ_DAILY, 100)
+        # Нижняя граница всё равно не опускается ниже их: 240 с.
         self.assertEqual(config.HARD_MIN_READ_INTERVAL_SEC, 240)
-        self.assertEqual(config.HARD_MIN_READ_GLOBAL_INTERVAL_SEC, 60)
 
     def test_the_floor_is_clamped_to_something_sane(self):
         limits = Limits()

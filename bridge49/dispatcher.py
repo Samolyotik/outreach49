@@ -261,6 +261,39 @@ GLOBAL_NEXT_REPLY_KEY = "global_next_reply_at"
 GLOBAL_NEXT_READ_KEY = "global_next_read_at"
 
 
+def _account_read_key(account_id: int) -> str:
+    return f"next_read_at:{int(account_id)}"
+
+
+def account_next_read_at(store: Store, account_id: int) -> datetime | None:
+    """Когда этому аккаунту снова можно читать.
+
+    Момент разыгрывается на выпуске и запоминается, а не выводится из времени
+    последней попытки. Разница видна на долге: аккаунт стоял на паузе, задачи
+    просрочены — и правило «не чаще, чем раз в N секунд» выпустило бы их ровным
+    шагом по нижней границе. Запомненный момент с разыгранной паузой держит
+    ритм неровным всегда, а не только когда очередь пуста.
+    """
+    raw = store.get_state(_account_read_key(account_id), "") or ""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _plan_account_read_pause(
+    settings: Settings, account_id: int, rng: random.Random | None = None
+) -> str:
+    """Разыграть следующую паузу аккаунта: `interval` + `0..jitter`."""
+    limits = settings.limits
+    low = max(0, int(limits.read_per_account_interval_sec))
+    span = max(0, int(limits.read_per_account_interval_jitter_sec))
+    delay = low + (rng or random).randint(0, span)
+    return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+
 def global_next_at(
     store: Store, cadence: str = CADENCE_OUTREACH
 ) -> datetime | None:
@@ -544,6 +577,19 @@ def preflight(
                 f"(лимит {pace.daily_cap})"
             )
 
+        # У чтения пауза разыграна заранее и запомнена по аккаунту. Проверка
+        # ниже (от последней попытки) осталась как нижняя граница: она держит
+        # и тогда, когда запомненного момента ещё нет — первый прогон после
+        # обновления, чужая правка базы.
+        if cadence == CADENCE_READ:
+            allowed = account_next_read_at(store, account_id)
+            if allowed is not None:
+                wait = int((allowed - datetime.now(timezone.utc)).total_seconds())
+                if wait > 0:
+                    raise DispatchBlocked(
+                        f"аккаунт читал недавно — следующее чтение через {wait} с"
+                    )
+
         # Пауза между отправками проверяется здесь, а не только при
         # планировании. Планировщик раскладывает по слотам, но в базу задачи
         # попадают и мимо него: повторный plan, вторая кампания на тот же
@@ -641,6 +687,10 @@ def _mark_attempt(
     if visible or cadence == CADENCE_READ:
         store.set_state(_global_key(cadence),
                         _plan_global_pause(settings, cadence=cadence))
+    if cadence == CADENCE_READ:
+        account_id = int(task["account_id"])
+        store.set_state(_account_read_key(account_id),
+                        _plan_account_read_pause(settings, account_id))
     store.commit()
 
 
