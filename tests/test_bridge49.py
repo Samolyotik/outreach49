@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, config, dispatcher, entities, planner, pollers, radar, watchdog  # noqa: E402
+from bridge49 import alerts, catalog, config, dispatcher, entities, planner, pollers, radar, watchdog  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
@@ -1604,6 +1604,129 @@ class WatchdogTests(unittest.TestCase):
             "SELECT id FROM events WHERE kind = 'watchdog'"
         )
         self.assertEqual(len(events), 1)
+
+    def test_fingerprint_notices_a_new_problem_at_the_same_level(self):
+        first = watchdog.Report(checked_at="t")
+        first.findings.append(watchdog.Finding("поллер", watchdog.CRITICAL, "x"))
+        second = watchdog.Report(checked_at="t")
+        second.findings.append(watchdog.Finding("поллер", watchdog.CRITICAL, "x"))
+        second.findings.append(watchdog.Finding("мост", watchdog.CRITICAL, "y"))
+        self.assertNotEqual(
+            watchdog.fingerprint(first), watchdog.fingerprint(second)
+        )
+
+    def test_fingerprint_ignores_changing_detail(self):
+        first = watchdog.Report(checked_at="t")
+        first.findings.append(
+            watchdog.Finding("поллер", watchdog.CRITICAL, "5 мин назад")
+        )
+        second = watchdog.Report(checked_at="t")
+        second.findings.append(
+            watchdog.Finding("поллер", watchdog.CRITICAL, "7 мин назад")
+        )
+        self.assertEqual(watchdog.fingerprint(first), watchdog.fingerprint(second))
+
+
+class AlertDeliveryTests(unittest.TestCase):
+    """Тревога должна доехать до админки — и не уронить сторожа, если нет."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        self.env = Path(self.tmp.name) / "alerts.env"
+        self.env.write_text(
+            'OUTREACH_OPS_TELEGRAM_ENABLED="1"\n'
+            'OUTREACH_OPS_TELEGRAM_BOT_TOKEN="123:ABC"\n'
+            'OUTREACH_OPS_TELEGRAM_CHAT_ID="-1003374720972"\n'
+            'OUTREACH_OPS_TELEGRAM_THREAD_ID="69282"\n',
+            encoding="utf-8",
+        )
+        self.sent: list[str] = []
+        self._real_send = alerts.send
+        self._real_from_file = alerts.TelegramTarget.from_file
+        alerts.TelegramTarget.from_file = classmethod(
+            lambda cls, path=None: self._real_from_file(self.env)
+        )
+
+    def tearDown(self):
+        alerts.send = self._real_send
+        alerts.TelegramTarget.from_file = self._real_from_file
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _capture(self):
+        def fake_send(target, text):
+            self.sent.append(text)
+            return 4242
+        alerts.send = fake_send
+
+    def _run(self):
+        return asyncio.run(
+            watchdog.run(self.store, self.settings, with_bridge=False)
+        )
+
+    def test_target_is_read_from_the_env_file(self):
+        target = alerts.TelegramTarget.from_file()
+        self.assertEqual(target.chat_id, "-1003374720972")
+        self.assertEqual(target.thread_id, "69282")
+        self.assertTrue(target.enabled)
+        # Токен не должен утекать в описание для логов.
+        self.assertNotIn("123:ABC", target.describe())
+
+    def test_problem_is_delivered(self):
+        self._capture()
+        self._run()
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("поллер", self.sent[0])
+
+    def test_repeated_state_is_not_delivered_twice(self):
+        self._capture()
+        self._run()
+        self._run()
+        self.assertEqual(len(self.sent), 1)
+
+    def test_recovery_is_delivered(self):
+        self._capture()
+        self._run()
+        self.store.execute(
+            "INSERT INTO events(at, actor, kind, subject, detail) "
+            "VALUES(?, 'timer', 'poll.inbound', '', '')",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        self.store.commit()
+        self._run()
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("восстановилось", self.sent[1])
+
+    def test_first_quiet_run_stays_silent(self):
+        self._capture()
+        self.store.execute(
+            "INSERT INTO events(at, actor, kind, subject, detail) "
+            "VALUES(?, 'timer', 'poll.inbound', '', '')",
+            (datetime.now(timezone.utc).isoformat(),),
+        )
+        self.store.commit()
+        self._run()
+        self.assertEqual(self.sent, [])
+
+    def test_delivery_failure_does_not_break_the_watchdog(self):
+        def failing_send(target, text):
+            raise alerts.AlertError("HTTP 400: chat not found")
+        alerts.send = failing_send
+        result = self._run()
+        self.assertFalse(result.ok)
+        logged = self.store.query(
+            "SELECT detail FROM events WHERE kind = 'watchdog.alert_failed'"
+        )
+        self.assertEqual(len(logged), 1)
+        self.assertIn("chat not found", logged[0]["detail"])
+
+    def test_missing_config_means_no_delivery(self):
+        alerts.TelegramTarget.from_file = classmethod(lambda cls, path=None: None)
+        self._capture()
+        result = self._run()
+        self.assertFalse(result.ok)
+        self.assertEqual(self.sent, [])
 
 
 if __name__ == "__main__":

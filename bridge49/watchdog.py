@@ -10,10 +10,13 @@
 """
 from __future__ import annotations
 
+import asyncio
+import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from . import alerts
 from .config import Settings
 from .radar import RadarBridge
 from .store import Store, dumps, now
@@ -211,11 +214,66 @@ async def check_bridge(store: Store, settings: Settings, report: Report) -> None
             )
 
 
+def fingerprint(report: Report) -> str:
+    """Отпечаток состояния: уровень плюс состав проблем.
+
+    По одному лишь уровню сравнивать мало: новая критичная проблема поверх
+    старой критичной не изменила бы его и осталась бы незамеченной. По полному
+    тексту — наоборот, слишком дробно: возраст в минутах меняется каждый
+    прогон, и сторож слал бы одно и то же каждые две минуты.
+    """
+    if not report.findings:
+        return "ok"
+    checks = ",".join(sorted({f.check for f in report.findings}))
+    return f"{report.worst}:{checks}"
+
+
+def compose_message(report: Report, *, host: str) -> str:
+    """Текст для админ-форума."""
+    if report.ok:
+        return f"✅ outreach49 ({host}): всё восстановилось"
+    head = f"🔴 outreach49 ({host}): {report.worst}"
+    lines = [head, ""]
+    for finding in sorted(
+        report.findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 9)
+    ):
+        lines.append(f"[{finding.severity}] {finding.check}: {finding.detail}")
+    facts = report.facts
+    lines.append("")
+    lines.append(
+        f"последний poll: {facts.get('last_poll_at') or '—'}; "
+        f"аккаунтов доступно: {facts.get('accounts_usable')}; "
+        f"боевой режим: {'да' if facts.get('armed') else 'нет'}"
+    )
+    return "\n".join(lines)
+
+
+async def deliver(report: Report, store: Store, *, actor: str) -> str | None:
+    """Отправить тревогу в админку. Возвращает описание исхода или None."""
+    target = alerts.TelegramTarget.from_file()
+    if target is None or not target.enabled:
+        return None
+    message = compose_message(report, host=socket.gethostname())
+    try:
+        # Отправка блокирующая: уводим её из петли событий, чтобы сторож
+        # оставался обычным async-кодом.
+        message_id = await asyncio.to_thread(alerts.send, target, message)
+    except alerts.AlertError as exc:
+        # Молчать нельзя, но и падать незачем: сторож, не сумевший рассказать
+        # о проблеме, не должен сам становиться второй проблемой.
+        store.log(actor, "watchdog.alert_failed", target.describe(), str(exc)[:300])
+        store.commit()
+        return f"не доставлено: {exc}"
+    store.log(actor, "watchdog.alert_sent", target.describe(), str(message_id))
+    store.commit()
+    return f"отправлено в {target.describe()}"
+
+
 async def run(
     store: Store, settings: Settings, *, actor: str = "watchdog",
-    with_bridge: bool = True,
+    with_bridge: bool = True, notify: bool = True,
 ) -> Report:
-    """Прогнать все проверки и сохранить результат."""
+    """Прогнать все проверки, сохранить результат и сообщить об изменениях."""
     report = Report(checked_at=now())
     check_poller(store, report)
     check_handoffs(store, report)
@@ -229,15 +287,23 @@ async def run(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dumps(payload), encoding="utf-8")
 
-    # В журнал пишем только смену состояния, иначе события утонут в шуме:
+    # Пишем и сообщаем только о смене состояния, иначе события утонут в шуме:
     # сторож ходит часто, а рассказывать ему обычно нечего.
     previous = store.get_state("watchdog_state", "")
-    current = report.worst or "ok"
-    if current != previous:
-        store.set_state("watchdog_state", current)
-        store.log(
-            actor, "watchdog", current,
-            "; ".join(f"{f.check}: {f.detail}" for f in report.findings) or "всё ровно",
-        )
-        store.commit()
+    current = fingerprint(report)
+    if current == previous:
+        return report
+
+    first_run = not previous
+    store.set_state("watchdog_state", current)
+    store.log(
+        actor, "watchdog", current,
+        "; ".join(f"{f.check}: {f.detail}" for f in report.findings) or "всё ровно",
+    )
+    store.commit()
+
+    # Первый прогон после установки состояния не имеет: сообщать «всё ровно»
+    # там, где ничего не менялось, — лишний шум в общем форуме.
+    if notify and not (first_run and report.ok):
+        report.facts["alert"] = await deliver(report, store, actor=actor)
     return report

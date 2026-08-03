@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import catalog, config, dispatcher, entities, planner, pollers, report, watchdog
+from . import alerts, catalog, config, dispatcher, entities, planner, pollers, report, watchdog
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -550,11 +550,30 @@ def cmd_poll(args) -> int:
 
 def cmd_watchdog(args) -> int:
     """Проверить, что контур жив. Ненулевой код — есть на что смотреть."""
+    if args.test_alert:
+        target = alerts.TelegramTarget.from_file()
+        if target is None:
+            print(report.bad(
+                "доставка не настроена: нет файла с реквизитами "
+                f"({alerts.DEFAULT_ALERTS_FILE} или BRIDGE49_ALERTS)"
+            ))
+            return 1
+        try:
+            message_id = alerts.send(
+                target, "🔧 outreach49: проверка канала тревог, реагировать не нужно"
+            )
+        except alerts.AlertError as exc:
+            print(report.bad(f"не доставлено ({target.describe()}): {exc}"))
+            return 1
+        print(report.good(f"отправлено в {target.describe()}, id={message_id}"))
+        return 0
+
     settings = _settings(args, need_dsn=not args.offline)
     with _store(settings) as store:
         result = asyncio.run(
             watchdog.run(store, settings, actor=args.actor,
-                         with_bridge=not args.offline)
+                         with_bridge=not args.offline,
+                         notify=not args.no_notify)
         )
     if args.json:
         _print_json(result.as_dict())
@@ -797,6 +816,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="машинный вывод")
     p.add_argument("--offline", action="store_true",
                    help="без обращения к Radar — только локальные проверки")
+    p.add_argument("--no-notify", action="store_true",
+                   help="не писать в админку, только посмотреть")
+    p.add_argument("--test-alert", action="store_true",
+                   help="отправить проверочное сообщение и выйти")
     p.set_defaults(func=cmd_watchdog)
 
     p = sub.add_parser("accounts", help="реестр аккаунтов")
