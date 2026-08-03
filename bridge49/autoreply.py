@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -382,10 +383,18 @@ def handle(
     actor: str = "autoreply",
     llm_caller=None,
 ) -> dict[str, Any]:
-    """Полный ход: собрать контекст, спросить движок, разложить решение."""
+    """Полный ход: собрать контекст, спросить движок, разложить решение.
+
+    Ворота на посторонних проверяет проход `run`: они зависят от настроек, а
+    сюда настройки не приходят. А вот арабское письмо проверяется прямо здесь
+    и безусловно — правило не должно обходиться тем, что кто-то позвал `handle`
+    напрямую, мимо прохода.
+    """
     thread = thread_for(store, inbound)
     if thread is None:
         raise AutoReplyError("нет диалога для входящего")
+    if arabic_script_peer(store, inbound, thread):
+        raise AutoReplyError("собеседник записан арабским письмом")
     context = build_context(store, inbound, thread)
     kwargs: dict[str, Any] = {"command": command}
     if llm_caller is not None:
@@ -393,6 +402,45 @@ def handle(
     decision = decide_inbound_reply(context, **kwargs)
     applied = apply(store, inbound, decision, scheduled_at=scheduled_at, actor=actor)
     return {**applied, "engine": decision}
+
+
+#: Арабское письмо во всех блоках Unicode, включая персидские буквы и формы
+#: представления. Персидский и арабский пользуются одной графикой, поэтому
+#: правило накрывает и то и другое.
+ARABIC_SCRIPT = re.compile(
+    r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿]"
+)
+
+
+def arabic_script_peer(store: Store, inbound: dict, thread: dict) -> bool:
+    """Записан ли собеседник арабским письмом.
+
+    Подавление чужого языка в движке смотрит на **текст** сообщения, а этого
+    мало: с арабским ником, но русским текстом входящее доезжает до модели и
+    получает ответ. На наших номерах такие собеседники остались от прежних
+    владельцев, и разговаривать с ними машине незачем.
+
+    Признак это косвенный: человек с арабским именем может писать по-русски и
+    быть настоящим клиентом. Поэтому не молчим в пустоту, а заводим карточку —
+    решает человек, а не автомат.
+    """
+    parts = [inbound.get("peer_username"), inbound.get("peer_key")]
+    contact = store.one(
+        "SELECT username, display_name FROM contacts WHERE id = ?",
+        (thread.get("contact_id"),),
+    )
+    if contact is not None:
+        parts += [contact["username"], contact["display_name"]]
+    return any(ARABIC_SCRIPT.search(str(part or "")) for part in parts)
+
+
+def skip_reason(store: Store, inbound: dict, thread: dict, settings) -> str:
+    """Почему с этим входящим машина не работает. Пусто — работает."""
+    if arabic_script_peer(store, inbound, thread):
+        return "собеседник записан арабским письмом"
+    if not (settings.autoreply_strangers or we_started_it(store, thread)):
+        return "входящее от постороннего"
+    return ""
 
 
 def reply_moment(inbound: dict, settings) -> str:
@@ -467,20 +515,19 @@ def run(
     if not settings.autoreply_enabled:
         return {"enabled": False, "handled": 0, "queued": 0, "failed": 0}
 
-    handled = queued = failed = strangers = 0
+    handled = queued = failed = skipped = 0
     for inbound in pending(store, limit):
         thread = thread_for(store, inbound)
-        if thread is not None and not (
-            settings.autoreply_strangers or we_started_it(store, thread)
-        ):
-            # Модель даже не зовём: посторонним отвечать нечего, а вызов стоит
-            # денег и минуты. Менеджер увидит карточку, как и раньше.
-            open_handoff(store, thread, "входящее от постороннего",
+        reason = skip_reason(store, inbound, thread, settings) if thread else ""
+        if reason:
+            # Модель даже не зовём: отвечать тут нечего, а вызов стоит денег и
+            # минуты. Менеджер увидит карточку, как и до автоответов.
+            open_handoff(store, thread, reason,
                          str(inbound.get("text") or "")[:300])
             store.execute("UPDATE inbound SET handled = 1 WHERE id = ?",
                           (int(inbound["id"]),))
             store.commit()
-            strangers += 1
+            skipped += 1
             handled += 1
             continue
         try:
@@ -511,7 +558,7 @@ def run(
 
     store.log(actor, "autoreply.run", "",
               f"разобрано={handled} поставлено={queued} ошибок={failed} "
-              f"посторонних={strangers}")
+              f"пропущено={skipped}")
     store.commit()
     return {"enabled": True, "handled": handled, "queued": queued,
-            "failed": failed, "strangers": strangers}
+            "failed": failed, "skipped": skipped}

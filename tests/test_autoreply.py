@@ -462,7 +462,7 @@ class StrangerGateTests(unittest.TestCase):
         result = autoreply.run(self.store, self.settings,
                                llm_caller=self.exploding_model())
 
-        self.assertEqual(result["strangers"], 1)
+        self.assertEqual(result["skipped"], 1)
         self.assertEqual(result["queued"], 0)
         card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
         self.assertEqual(card["reason"], "входящее от постороннего")
@@ -493,8 +493,110 @@ class StrangerGateTests(unittest.TestCase):
         result = autoreply.run(self.store, self.settings,
                                llm_caller=self.exploding_model())
 
-        self.assertEqual(result["strangers"], 0, "ворота должны были открыться")
+        self.assertEqual(result["skipped"], 0, "ворота должны были открыться")
         self.assertEqual(result["queued"], 0, "движок подавляет чужой язык сам")
         self.assertIsNone(
             self.store.one("SELECT id FROM handoffs WHERE status = 'new'")
         )
+
+
+class ArabicScriptGateTests(unittest.TestCase):
+    """Собеседник, записанный арабским письмом, машине не достаётся.
+
+    Подавление чужого языка в движке смотрит на текст сообщения. С арабским
+    ником, но русским текстом входящее раньше доезжало до модели и получало
+    ответ — эта дыра здесь и закрывается.
+    """
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+        # Ворота на посторонних не должны маскировать проверку письма.
+        self.settings.autoreply_strangers_file.touch()
+
+    def make(self, *, username: str, display_name: str | None = None,
+             text: str = "Здравствуйте, а сколько стоит?") -> dict:
+        contact = entities.add_contact(
+            self.store, username=username, display_name=display_name,
+            segment="inbound", actor="test",
+        )
+        thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, last_outbound_at, created_at, updated_at) "
+            "VALUES(?,821,?,?,'private_dm','open',?,?,?)",
+            (thread_id, f"@{username}", contact["id"], now(), now(), now()),
+        )
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, raw, created_at) "
+            "VALUES(9600,821,'private_dm',?,?,?,'{}',?)",
+            (f"@{username}", username, text, now()),
+        )
+        self.store.commit()
+        return dict(self.store.one("SELECT * FROM inbound WHERE id = 9600"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def exploding_model(self):
+        def caller(*args, **kwargs):
+            raise AssertionError("модель звали для арабского собеседника")
+        return caller
+
+    def test_arabic_username_is_skipped_before_the_model(self):
+        self.make(username="ahmadian3324", display_name="احمدیان")
+
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["queued"], 0)
+        card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
+        self.assertEqual(card["reason"], "собеседник записан арабским письмом")
+
+    def test_arabic_in_the_peer_field_is_enough(self):
+        inbound = self.make(username="someone")
+        self.store.execute(
+            "UPDATE inbound SET peer_username = ? WHERE id = 9600", ("سلام",))
+        self.store.commit()
+        thread = autoreply.thread_for(
+            self.store, dict(self.store.one("SELECT * FROM inbound WHERE id = 9600")))
+
+        self.assertTrue(autoreply.arabic_script_peer(
+            self.store,
+            dict(self.store.one("SELECT * FROM inbound WHERE id = 9600")),
+            thread,
+        ))
+
+    def test_a_latin_nickname_still_reaches_the_model(self):
+        """Правило про письмо, а не про происхождение: ali_khan проходит."""
+        self.make(username="ali_khan", display_name="Ali Khan")
+        called = []
+
+        def caller(*args, **kwargs):
+            called.append(True)
+            raise RuntimeError("модель недоступна")
+
+        autoreply.run(self.store, self.settings, llm_caller=caller)
+
+        self.assertTrue(called, "латинский ник не должен отсекаться")
+
+    def test_the_rule_cannot_be_bypassed_by_calling_handle(self):
+        """Ворота на посторонних живут в проходе, а это правило — в самом ходе."""
+        inbound = self.make(username="ahmadian3324", display_name="احمدیان")
+
+        with self.assertRaises(autoreply.AutoReplyError):
+            autoreply.handle(self.store, inbound,
+                             llm_caller=self.exploding_model())
