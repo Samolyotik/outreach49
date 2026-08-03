@@ -124,7 +124,14 @@ ACTIONS: dict[str, Action] = {
            "Догнать пропущенные ответы в личных диалогах.",
            optional=("limit_per_dialog",)),
 
-        _a("send_private_dm", RISK_MATURE_DM, frozenset({"dm_sender"}),
+        # chat_sender добавлен 03.08.2026 решением владельца: у трёх аккаунтов
+        # остались личные диалоги, которые они же и вели, а `reply_private_dm`
+        # для них недоступен — он берёт адресата из входящего уведомления
+        # Radar, а таких уведомлений у этих аккаунтов нет и не появится.
+        # Право писать в личку первым это всё-таки расширяет, поэтому Radar
+        # проверяет свой allowlist независимо и остаётся последним словом.
+        _a("send_private_dm", RISK_MATURE_DM,
+           frozenset({"dm_sender", "chat_sender"}),
            "Личное сообщение пользователю.",
            optional=("username", "target_user_tg_id", "text", "online",
                      "typing", "attachments"),

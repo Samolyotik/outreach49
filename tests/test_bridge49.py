@@ -82,14 +82,24 @@ def make_env(tmp: Path) -> tuple[Store, Settings]:
 
 class CatalogTests(unittest.TestCase):
     def test_role_gate(self):
+        # monoforum канала пишет только channel_sender — это по-прежнему так.
         with self.assertRaises(catalog.ValidationError):
             catalog.validate(
-                "send_private_dm", {"username": "x", "text": "привет"},
-                roles={"chat_sender"},
+                "send_channel_dm", {"username": "x", "text": "привет"},
+                roles={"dm_sender"},
             )
         action = catalog.validate(
+            "send_channel_dm", {"username": "x", "text": "привет"},
+            roles={"channel_sender"},
+        )
+        self.assertEqual(action.risk, catalog.RISK_MATURE_DM)
+
+    def test_chat_sender_may_write_private_dm(self):
+        # Расширено 03.08.2026: у трёх chat_sender остались личные диалоги,
+        # а reply_private_dm им недоступен — нет входящего уведомления Radar.
+        action = catalog.validate(
             "send_private_dm", {"username": "x", "text": "привет"},
-            roles={"dm_sender"},
+            roles={"chat_sender"},
         )
         self.assertEqual(action.risk, catalog.RISK_MATURE_DM)
 
