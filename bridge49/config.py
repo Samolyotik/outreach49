@@ -136,10 +136,13 @@ class Limits:
     #: Пауза между ответами разных аккаунтов, сек.
     reply_global_interval_min_sec: int = 3
     reply_global_interval_max_sec: int = 8
-    #: Окно ответов шире рассылочного и работает без выходных: человек,
-    #: написавший в субботу вечером, ждёт ответа, а не «мы вам в понедельник».
-    reply_window_start_hour: int = 9
-    reply_window_end_hour: int = 22
+    #: Ответы идут круглосуточно и без выходных. Это не послабление, а перенос
+    #: поведения прежнего контура: там `require_send_window_for_auto_reply`
+    #: стоял в False и в коде, и в боевом конфиге. Окно нужно рассылке, которую
+    #: мы затеваем сами; человека, написавшего ночью, оно бы просто заставило
+    #: ждать до утра без всякой пользы.
+    reply_window_start_hour: int = 0
+    reply_window_end_hour: int = 24
     reply_weekdays: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6)
     #: Задержка перед автоответом, считается от входящего. Не темп, а правдо-
     #: подобие: ответ через полсекунды выдаёт автомат вернее любого текста.
@@ -167,8 +170,11 @@ HARD_WINDOW_END_HOUR = 22
 HARD_MAX_REPLY_DAILY = 100
 HARD_MIN_REPLY_INTERVAL_SEC = 30
 HARD_MIN_REPLY_GLOBAL_INTERVAL_SEC = 2
-HARD_REPLY_WINDOW_START_HOUR = 7
-HARD_REPLY_WINDOW_END_HOUR = 23
+#: Ответам ночное окно не зажимаем: круглосуточная работа — это перенесённое
+#: поведение прежнего контура, а не просмотренная дыра. Пол оставлен только на
+#: бессмысленные значения (перевёрнутое или вышедшее за сутки окно).
+HARD_REPLY_WINDOW_START_HOUR = 0
+HARD_REPLY_WINDOW_END_HOUR = 24
 
 
 def clamp(limits: Limits) -> list[str]:

@@ -142,7 +142,6 @@ class CadenceTests(unittest.TestCase):
         limits = Limits()
         limits.reply_per_account_daily = 10_000
         limits.reply_per_account_interval_sec = 0
-        limits.reply_window_end_hour = 24
 
         notes = config.clamp(limits)
 
@@ -150,9 +149,24 @@ class CadenceTests(unittest.TestCase):
                          config.HARD_MAX_REPLY_DAILY)
         self.assertEqual(limits.reply_per_account_interval_sec,
                          config.HARD_MIN_REPLY_INTERVAL_SEC)
-        self.assertEqual(limits.reply_window_end_hour,
-                         config.HARD_REPLY_WINDOW_END_HOUR)
-        self.assertEqual(len(notes), 3, notes)
+        self.assertEqual(len(notes), 2, notes)
+
+    def test_replies_run_round_the_clock(self):
+        """Перенос поведения прежнего контура: require_send_window_for_auto_reply
+        стоял в False и в коде, и в боевом конфиге."""
+        limits = Limits()
+        config.clamp(limits)
+        settings = Settings(
+            home=Path("/tmp"), db_path=Path("/tmp/x"), dsn=None, limits=limits,
+            timezone="Europe/Moscow",
+        )
+        # Ночь воскресенья — худший случай и для часа, и для дня недели.
+        night = datetime(2026, 8, 2, 0, 30, tzinfo=timezone.utc)
+
+        self.assertTrue(dispatcher.inside_send_window(
+            settings, night, cadence=dispatcher.CADENCE_REPLY))
+        self.assertFalse(dispatcher.inside_send_window(
+            settings, night, cadence=dispatcher.CADENCE_OUTREACH))
 
 
 if __name__ == "__main__":
