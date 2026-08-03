@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import (alerts, catalog, config, dispatcher, entities, planner, pollers,
-               replies, report, watchdog)
+from . import (alerts, autoreply, catalog, config, dispatcher, entities,
+               planner, pollers, replies, report, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -516,6 +516,62 @@ def cmd_dispatch(args) -> int:
     return 0
 
 
+def cmd_autoreply(args) -> int:
+    """Разобрать входящие движком и поставить ответы в очередь."""
+    settings = _settings(args)
+
+    if args.state in ("on", "off"):
+        settings.autoreply_file.parent.mkdir(parents=True, exist_ok=True)
+        if args.state == "on":
+            settings.autoreply_file.touch()
+            print(report.good("автоответы включены"))
+            print(report.warn(
+                "Машина будет сама сочинять ответы людям. Она придержит то, в "
+                "чём не уверена, но отправленное всё равно стоит перечитывать: "
+                "bridge49 autoreply review"
+            ))
+        else:
+            settings.autoreply_file.unlink(missing_ok=True)
+            print("автоответы выключены")
+        return 0
+
+    with _store(settings) as store:
+        if args.state == "review":
+            rows = store.query(
+                "SELECT t.id, t.account_id, t.state, t.review_reason, "
+                "       t.dispatched_at, c.username "
+                "  FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id "
+                " WHERE t.campaign_id = ? AND t.review_reason IS NOT NULL "
+                " ORDER BY t.id DESC LIMIT ?",
+                (replies.AUTO_CAMPAIGN_ID, args.limit),
+            )
+            if not rows:
+                print("помеченных ответов нет")
+                return 0
+            print(report.table([
+                {"задача": r["id"], "аккаунт": r["account_id"],
+                 "кому": r["username"] or "—", "состояние": r["state"],
+                 "почему помечено": r["review_reason"]}
+                for r in rows
+            ]))
+            return 0
+
+        if not settings.autoreply_enabled:
+            print(report.warn(
+                "автоответы выключены — включить: bridge49 autoreply on"
+            ))
+            return 1
+        result = autoreply.run(store, settings, limit=args.limit,
+                               actor=args.actor)
+
+    print(report.kv(sorted(result.items())))
+    if result.get("queued") and not settings.armed:
+        print(report.warn(
+            "боевой режим выключен — ответы поставлены, но не уйдут"
+        ))
+    return 0
+
+
 def cmd_arm(args) -> int:
     settings = _settings(args)
     message = dispatcher.arm(settings, args.state == "on", actor=args.actor)
@@ -950,6 +1006,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("arm", help="включить/выключить боевой режим")
     p.add_argument("state", choices=("on", "off"))
     p.set_defaults(func=cmd_arm)
+
+    p = sub.add_parser("autoreply", help="автоответы на входящие")
+    p.add_argument("state", nargs="?", default="run",
+                   choices=("run", "on", "off", "review"),
+                   help="run — разобрать входящие; review — что помечено "
+                        "на перечитывание")
+    p.add_argument("--limit", type=int, default=20)
+    p.set_defaults(func=cmd_autoreply)
 
     p = sub.add_parser("poll", help="забрать результаты и входящие")
     p.add_argument("what", nargs="?", default="all",

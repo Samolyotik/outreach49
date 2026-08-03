@@ -26,7 +26,9 @@ preflight в `dispatcher`. Ни одно решение движка не отп
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import accounts as accounts_mod
@@ -358,3 +360,110 @@ def handle(
     decision = decide_inbound_reply(context, **kwargs)
     applied = apply(store, inbound, decision, scheduled_at=scheduled_at, actor=actor)
     return {**applied, "engine": decision}
+
+
+def reply_moment(inbound: dict, settings) -> str:
+    """Когда выпускать ответ: спустя паузу на чтение от самого входящего.
+
+    Это не темп, а правдоподобие. Ответ через полсекунды выдаёт автомат
+    вернее любого текста, поэтому пауза отсчитывается от момента, когда
+    человек написал, а не от того, когда до него дошли руки у нас.
+
+    Разброс детерминированный — от идентификатора входящего. Повторный
+    прогон даст тот же момент, а не сдвинет отправку ещё на полминуты.
+    """
+    limits = settings.limits
+    raw = str(inbound.get("sent_at") or inbound.get("created_at") or "")
+    try:
+        base = datetime.fromisoformat(raw)
+    except ValueError:
+        base = datetime.now(timezone.utc)
+    if base.tzinfo is None:
+        base = base.replace(tzinfo=timezone.utc)
+    low = max(0, int(limits.reply_delay_after_inbound_min_sec))
+    high = max(low, int(limits.reply_delay_after_inbound_max_sec))
+    span = high - low
+    digest = hashlib.sha256(str(inbound["id"]).encode("utf-8")).hexdigest()
+    delay = low + (int(digest[:8], 16) % (span + 1) if span else 0)
+    moment = base + timedelta(seconds=delay)
+    # Входящее могло пролежать: назад во времени задачу ставить бессмысленно.
+    return max(moment, datetime.now(timezone.utc)).isoformat()
+
+
+def pending(store: Store, limit: int = 20) -> list[dict]:
+    """Входящие, которые ещё не разобраны.
+
+    Если от одного человека пришло несколько сообщений подряд, отвечаем только
+    на последнее: предыдущие — часть того же хода, и три ответа подряд на них
+    выглядели бы хуже, чем один на всё сразу. Обогнанные помечаем разобранными,
+    их текст всё равно уедет в модель как история.
+    """
+    rows = [dict(r) for r in store.query(
+        "SELECT * FROM inbound WHERE handled = 0 ORDER BY id", ()
+    )]
+    newest: dict[tuple[int, str], dict] = {}
+    superseded: list[int] = []
+    for row in rows:
+        key = (int(row["account_id"]), str(row["peer_key"]))
+        if key in newest:
+            superseded.append(int(newest[key]["id"]))
+        newest[key] = row
+    if superseded:
+        marks = ",".join("?" * len(superseded))
+        store.execute(
+            f"UPDATE inbound SET handled = 1 WHERE id IN ({marks})", superseded
+        )
+        store.commit()
+    return list(newest.values())[:limit]
+
+
+def run(
+    store: Store,
+    settings,
+    *,
+    limit: int = 20,
+    command: str | None = None,
+    actor: str = "autoreply",
+    llm_caller=None,
+) -> dict[str, Any]:
+    """Разобрать накопившиеся входящие. Ничего не отправляет — только ставит.
+
+    Вызывается отдельным проходом, а не из поллера: обращение к модели идёт
+    десятки секунд, и фид входящих на это время встал бы.
+    """
+    if not settings.autoreply_enabled:
+        return {"enabled": False, "handled": 0, "queued": 0, "failed": 0}
+
+    handled = queued = failed = 0
+    for inbound in pending(store, limit):
+        try:
+            result = handle(
+                store, inbound,
+                command=command,
+                scheduled_at=reply_moment(inbound, settings),
+                actor=actor,
+                llm_caller=llm_caller,
+            )
+            if result["task"]:
+                queued += 1
+        except Exception as exc:  # noqa: BLE001 — разбор одного не рушит проход
+            failed += 1
+            store.log(actor, "autoreply.failed", str(inbound["id"]),
+                      f"{exc.__class__.__name__}: {exc}"[:300])
+            thread = thread_for(store, inbound)
+            if thread is not None:
+                open_handoff(store, thread, "autoreply_failed",
+                             f"{exc.__class__.__name__}: {exc}"[:300])
+        # Помечаем разобранным в любом случае, включая неудачу: иначе одно
+        # неразбираемое сообщение крутилось бы в голове очереди вечно и не
+        # давало бы разобрать остальные. Про неудачу знает журнал и карточка.
+        store.execute("UPDATE inbound SET handled = 1 WHERE id = ?",
+                      (int(inbound["id"]),))
+        handled += 1
+        store.commit()
+
+    store.log(actor, "autoreply.run", "",
+              f"разобрано={handled} поставлено={queued} ошибок={failed}")
+    store.commit()
+    return {"enabled": True, "handled": handled, "queued": queued,
+            "failed": failed}

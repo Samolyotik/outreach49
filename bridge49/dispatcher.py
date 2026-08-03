@@ -145,7 +145,34 @@ def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
     return out
 
 
-def visible_sent_today(store: Store, account_id: int) -> int:
+#: Класс темпа. Рассылку мы затеваем сами, ответ ждёт живой человек — это
+#: разные занятия, и меряются они разными числами. Ответ узнаётся по действию:
+#: `reply_private_dm` — единственное, которое адресуется тому, кто написал нам
+#: сам, и потому не является первым касанием.
+CADENCE_OUTREACH = "outreach"
+CADENCE_REPLY = "reply"
+
+
+def cadence_of(task: dict) -> str:
+    """К какому классу темпа относится задача."""
+    return (CADENCE_REPLY if task.get("action") in replies.REPLY_ACTIONS
+            else CADENCE_OUTREACH)
+
+
+def _cadence_actions(cadence: str) -> tuple[str, ...]:
+    """Какие действия считаются в бюджете этого класса.
+
+    Бюджеты раздельные: сорок автоответов за день не должны обнулить дневную
+    норму рассылки, а рассылка — лишить людей ответов.
+    """
+    if cadence == CADENCE_REPLY:
+        return tuple(sorted(replies.REPLY_ACTIONS))
+    return tuple(a for a in VISIBLE_ACTIONS if a not in replies.REPLY_ACTIONS)
+
+
+def visible_sent_today(
+    store: Store, account_id: int, cadence: str = CADENCE_OUTREACH
+) -> int:
     """Сколько видимых действий аккаунт уже израсходовал за сегодня.
 
     Считаем только видимые: read и soft собеседник не наблюдает, и лимит на
@@ -158,30 +185,41 @@ def visible_sent_today(store: Store, account_id: int) -> int:
     задача без обеих отметок до моста не дошла и в счёт не идёт сама собой.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
+    actions = _cadence_actions(cadence)
+    placeholders = ",".join("?" * len(actions))
     row = store.one(
         "SELECT count(*) AS n FROM tasks "
         f"WHERE account_id = ? AND action IN ({placeholders}) "
         "  AND substr(COALESCE(dispatched_at, attempted_at), 1, 10) = ?",
-        (int(account_id), *VISIBLE_ACTIONS, today),
+        (int(account_id), *actions, today),
     )
     return int(row["n"])
 
 
-def last_visible_attempt_at(store: Store, account_id: int) -> datetime | None:
+def last_visible_attempt_at(
+    store: Store, account_id: int, cadence: str = CADENCE_OUTREACH
+) -> datetime | None:
     """Когда аккаунт в последний раз обращался к мосту за видимым действием.
 
     Читаем отметку попытки, а не `scheduled_at`: пол меряется от факта
     обращения. Задача, пролежавшая в плане сутки, не даёт аккаунту права
     отправить две подряд, а неудачная попытка не даёт права попробовать
     снова немедленно.
+
+    Классы смотрят на разное, и это намеренно. Рассылка меряет паузу от
+    прошлой **рассылки**: ответ человеку не повод откладывать кампанию на
+    полчаса. Ответ меряет от **любого** видимого действия: тут пол короткий,
+    и нужен он ровно затем, чтобы аккаунт не выпустил два сообщения одной
+    секундой — а с точки зрения Telegram аккаунт один, чем бы мы его ни
+    занимали.
     """
-    placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
+    actions = VISIBLE_ACTIONS if cadence == CADENCE_REPLY else _cadence_actions(cadence)
+    placeholders = ",".join("?" * len(actions))
     row = store.one(
         "SELECT max(COALESCE(dispatched_at, attempted_at)) AS last FROM tasks "
         f"WHERE account_id = ? AND action IN ({placeholders}) "
         "  AND COALESCE(dispatched_at, attempted_at) IS NOT NULL",
-        (int(account_id), *VISIBLE_ACTIONS),
+        (int(account_id), *actions),
     )
     if not row or not row["last"]:
         return None
@@ -193,11 +231,14 @@ def last_visible_attempt_at(store: Store, account_id: int) -> datetime | None:
 
 #: Ключ в `state`, хранящий момент, раньше которого не выпускает НИКТО.
 GLOBAL_NEXT_KEY = "global_next_visible_at"
+GLOBAL_NEXT_REPLY_KEY = "global_next_reply_at"
 
 
-def global_next_visible_at(store: Store) -> datetime | None:
+def global_next_visible_at(
+    store: Store, cadence: str = CADENCE_OUTREACH
+) -> datetime | None:
     """Момент, раньше которого ни один аккаунт не выпускает видимое действие."""
-    raw = store.get_state(GLOBAL_NEXT_KEY, "") or ""
+    raw = store.get_state(_global_key(cadence), "") or ""
     if not raw:
         return None
     try:
@@ -206,11 +247,24 @@ def global_next_visible_at(store: Store) -> datetime | None:
         return None
 
 
-def _plan_global_pause(settings: Settings, rng: random.Random | None = None) -> str:
+def _global_key(cadence: str) -> str:
+    """Своя пауза флота на класс: очередь ответов не стоит за рассылкой."""
+    return GLOBAL_NEXT_REPLY_KEY if cadence == CADENCE_REPLY else GLOBAL_NEXT_KEY
+
+
+def _plan_global_pause(
+    settings: Settings,
+    rng: random.Random | None = None,
+    cadence: str = CADENCE_OUTREACH,
+) -> str:
     """Отложить следующий выпуск флота на случайную паузу из диапазона."""
     limits = settings.limits
-    low = max(0, int(limits.global_visible_interval_min_sec))
-    high = max(low, int(limits.global_visible_interval_max_sec))
+    if cadence == CADENCE_REPLY:
+        low = max(0, int(limits.reply_global_interval_min_sec))
+        high = max(low, int(limits.reply_global_interval_max_sec))
+    else:
+        low = max(0, int(limits.global_visible_interval_min_sec))
+        high = max(low, int(limits.global_visible_interval_max_sec))
     delay = (rng or random).randint(low, high)
     moment = datetime.now(timezone.utc) + timedelta(seconds=delay)
     return moment.isoformat()
@@ -255,19 +309,36 @@ def campaign_allows_repeat(task: dict) -> bool:
     return bool(task.get("campaign_allow_repeat"))
 
 
-def inside_send_window(settings: Settings, moment: datetime | None = None) -> bool:
-    """Идёт ли сейчас окно отправки в рабочей таймзоне."""
+def inside_send_window(
+    settings: Settings,
+    moment: datetime | None = None,
+    cadence: str = CADENCE_OUTREACH,
+) -> bool:
+    """Идёт ли сейчас окно отправки в рабочей таймзоне.
+
+    У ответов окно своё и шире: оно про то, когда живой человек мог бы
+    ответить, а не про то, когда удобно вести кампанию. Написавший в субботу
+    вечером ждёт ответа, а не «мы вам в понедельник».
+    """
     limits = settings.limits
-    if not limits.send_window_start_hour and not limits.send_window_end_hour:
+    if cadence == CADENCE_REPLY:
+        start = limits.reply_window_start_hour
+        end = limits.reply_window_end_hour
+        weekdays = limits.reply_weekdays
+    else:
+        start = limits.send_window_start_hour
+        end = limits.send_window_end_hour
+        weekdays = limits.send_weekdays
+    if not start and not end:
         return True
     moment = moment or datetime.now(timezone.utc)
     try:
         local = moment.astimezone(ZoneInfo(settings.timezone))
     except Exception:  # noqa: BLE001 — нет tzdata: не мешаем работе
         return True
-    if local.weekday() not in limits.send_weekdays:
+    if local.weekday() not in weekdays:
         return False
-    return limits.send_window_start_hour <= local.hour < limits.send_window_end_hour
+    return start <= local.hour < end
 
 
 def preflight(
@@ -320,14 +391,22 @@ def preflight(
                 "allow_immediate_visible_actions=true у аккаунта в Radar"
             )
 
+    cadence = cadence_of(task)
+
     if action.visible:
         # Окно проверяется ещё раз здесь, а не только при планировании:
         # задача могла пролежать в очереди до ночи из-за паузы или сбоя.
-        if not inside_send_window(settings):
+        if not inside_send_window(settings, cadence=cadence):
+            start, end = (
+                (settings.limits.reply_window_start_hour,
+                 settings.limits.reply_window_end_hour)
+                if cadence == CADENCE_REPLY
+                else (settings.limits.send_window_start_hour,
+                      settings.limits.send_window_end_hour)
+            )
             raise DispatchBlocked(
-                "сейчас вне окна отправки "
-                f"({settings.limits.send_window_start_hour}:00–"
-                f"{settings.limits.send_window_end_hour}:00 {settings.timezone})"
+                f"сейчас вне окна {'ответов' if cadence == CADENCE_REPLY else 'отправки'} "
+                f"({start}:00–{end}:00 {settings.timezone})"
             )
 
         # Одному человеку — одно первое касание, даже если кампаний несколько.
@@ -353,23 +432,34 @@ def preflight(
         # складываются в залп, даже когда каждый по отдельности выдержал свой
         # интервал. Предпросмотр её не применяет — он отвечает на вопрос «что
         # уйдёт за прогон», а уйдёт всё, просто с паузами между отправками.
-        blocked_until = global_next_visible_at(store) if enforce_global_pause else None
+        blocked_until = (global_next_visible_at(store, cadence)
+                         if enforce_global_pause else None)
         if blocked_until is not None:
             wait = (blocked_until - datetime.now(timezone.utc)).total_seconds()
             if wait > 0:
+                low, high = (
+                    (settings.limits.reply_global_interval_min_sec,
+                     settings.limits.reply_global_interval_max_sec)
+                    if cadence == CADENCE_REPLY
+                    else (settings.limits.global_visible_interval_min_sec,
+                          settings.limits.global_visible_interval_max_sec)
+                )
                 raise DispatchTooEarly(
                     f"по флоту только что отправляли — ждём ещё {int(wait) + 1} с "
-                    f"(пауза {settings.limits.global_visible_interval_min_sec}–"
-                    f"{settings.limits.global_visible_interval_max_sec} с)",
+                    f"(пауза {low}–{high} с)",
                     wait_seconds=int(wait) + 1,
                 )
 
-        already = visible_sent_today(store, account_id)
+        daily_cap = (settings.limits.reply_per_account_daily
+                     if cadence == CADENCE_REPLY
+                     else settings.limits.per_account_daily_visible)
+        already = visible_sent_today(store, account_id, cadence)
         already += int((spent or {}).get(account_id, 0))
-        if already >= settings.limits.per_account_daily_visible:
+        if already >= daily_cap:
             raise DispatchBlocked(
-                f"аккаунт уже выпустил {already} видимых действий за сегодня "
-                f"(лимит {settings.limits.per_account_daily_visible})"
+                f"аккаунт уже выпустил {already} "
+                f"{'ответов' if cadence == CADENCE_REPLY else 'видимых действий'} "
+                f"за сегодня (лимит {daily_cap})"
             )
 
         # Пауза между отправками проверяется здесь, а не только при
@@ -377,9 +467,13 @@ def preflight(
         # попадают и мимо него: повторный plan, вторая кампания на тот же
         # сегмент, импорт, правка руками. Пол должен держать в любом из этих
         # случаев, иначе весь пакет уедет одной секундой.
-        interval = int(settings.limits.per_account_visible_interval_sec or 0)
+        interval = int(
+            (settings.limits.reply_per_account_interval_sec
+             if cadence == CADENCE_REPLY
+             else settings.limits.per_account_visible_interval_sec) or 0
+        )
         if interval > 0:
-            last = last_visible_attempt_at(store, account_id)
+            last = last_visible_attempt_at(store, account_id, cadence)
             simulated = (recent or {}).get(account_id)
             if simulated is not None and (last is None or simulated > last):
                 last = simulated
@@ -458,7 +552,9 @@ def _mark_attempt(
         (now(), now(), task["id"]),
     )
     if visible:
-        store.set_state(GLOBAL_NEXT_KEY, _plan_global_pause(settings))
+        cadence = cadence_of(task)
+        store.set_state(_global_key(cadence),
+                        _plan_global_pause(settings, cadence=cadence))
     store.commit()
 
 

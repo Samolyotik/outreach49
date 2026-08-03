@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import sys
 import tempfile
 import unittest
@@ -212,3 +213,99 @@ class AutoReplyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AutoReplyRunTests(unittest.TestCase):
+    """Проход разбора: очередь входящих, задержка, устойчивость к сбоям."""
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+
+        contact = entities.add_contact(self.store, username="someone",
+                                       segment="inbound", actor="test")
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (self.thread_id, contact["id"], now(), now()),
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add_inbound(self, ident: int, text: str, peer: str = "@someone"):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, raw, created_at) "
+            "VALUES(?,821,'private_dm',?,?,?,'{}',?)",
+            (ident, peer, peer.lstrip("@"), text, now()),
+        )
+        self.store.commit()
+
+    def test_switch_off_means_nothing_happens(self):
+        self.settings.autoreply_file.unlink()
+        self.add_inbound(1, "привет")
+
+        result = autoreply.run(self.store, self.settings)
+
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["handled"], 0)
+
+    def test_only_the_newest_message_of_a_burst_is_answered(self):
+        """Три сообщения подряд — один ответ, а не три."""
+        self.add_inbound(1, "здравствуйте")
+        self.add_inbound(2, "хочу спросить")
+        self.add_inbound(3, "сколько стоит?")
+
+        pending = autoreply.pending(self.store)
+
+        self.assertEqual([row["id"] for row in pending], [3])
+        earlier = self.store.query(
+            "SELECT id, handled FROM inbound WHERE id IN (1,2) ORDER BY id")
+        self.assertEqual([r["handled"] for r in earlier], [1, 1])
+
+    def test_messages_from_different_people_are_all_answered(self):
+        self.add_inbound(1, "вопрос", peer="@someone")
+        self.add_inbound(2, "другой вопрос", peer="@another")
+
+        pending = autoreply.pending(self.store)
+
+        self.assertEqual(sorted(row["id"] for row in pending), [1, 2])
+
+    def test_a_broken_message_does_not_block_the_queue(self):
+        """Иначе одно неразбираемое входящее стояло бы в голове очереди вечно."""
+        self.add_inbound(1, "вопрос без диалога", peer="@nothread")
+
+        result = autoreply.run(self.store, self.settings)
+
+        self.assertEqual(result["failed"], 1)
+        self.assertEqual(result["handled"], 1)
+        row = self.store.one("SELECT handled FROM inbound WHERE id = 1")
+        self.assertEqual(row["handled"], 1)
+
+    def test_reply_moment_is_delayed_and_stable(self):
+        self.add_inbound(1, "вопрос")
+        inbound = dict(self.store.one("SELECT * FROM inbound WHERE id = 1"))
+
+        first = autoreply.reply_moment(inbound, self.settings)
+        second = autoreply.reply_moment(inbound, self.settings)
+
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(
+            datetime.fromisoformat(first),
+            datetime.fromisoformat(str(inbound["created_at"])),
+        )

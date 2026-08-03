@@ -248,7 +248,11 @@ async def poll_inbound(
                     "WHERE id = ? AND status IN ('new', 'contacted')",
                     (now(), contact_id),
                 )
-            if surface in HANDOFF_SURFACES:
+            # Когда автоответы включены, карточку заводит движок — и только
+            # там, где сам решил, что нужен человек. Заводить её на каждое
+            # входящее означало бы звать менеджера к каждому «здравствуйте»,
+            # на которое машина ответит сама.
+            if surface in HANDOFF_SURFACES and not settings.autoreply_enabled:
                 replies += _ensure_handoff(
                     store, thread_id, message.get("text") or ""
                 )

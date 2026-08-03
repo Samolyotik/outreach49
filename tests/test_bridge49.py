@@ -1904,13 +1904,22 @@ class ReplyTests(unittest.TestCase):
         result = run_dispatch(self.store, self.settings, bridge, confirm=True)
         self.assertEqual(result["dispatched"], 1, result)
 
-    def test_reply_still_obeys_the_send_window(self):
-        self.settings.limits.send_weekdays = ()
+    def test_reply_obeys_its_own_window(self):
+        self.settings.limits.reply_weekdays = ()
         replies.queue_reply(self.store, text="ответ", thread_id="th1")
         bridge = FakeEnqueueBridge()
         result = run_dispatch(self.store, self.settings, bridge, confirm=True)
         self.assertEqual(result["dispatched"], 0)
         self.assertEqual(bridge.calls, [])
+
+    def test_reply_is_not_held_by_the_outreach_window(self):
+        """Ответ не ждёт понедельника: человек написал и ждёт сейчас."""
+        self.settings.limits.send_weekdays = ()      # рассылка закрыта
+        self.settings.limits.reply_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        replies.queue_reply(self.store, text="ответ", thread_id="th1")
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 1, result)
 
 
 if __name__ == "__main__":
