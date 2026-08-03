@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS campaigns (
   daily_cap      INTEGER NOT NULL DEFAULT 50,
   per_account_daily_cap INTEGER NOT NULL DEFAULT 12,
   params         TEXT NOT NULL DEFAULT '{}',        -- статические доп. params
+  -- Разрешает писать тем, кого уже касались раньше (догоняющая волна).
+  -- Отдельной колонкой, а не ключом в params: params уезжают в Radar как
+  -- параметры действия и валидируются каталогом — чужой ключ там не пройдёт.
+  allow_repeat_contacts INTEGER NOT NULL DEFAULT 0,
   ttl_hours      INTEGER NOT NULL DEFAULT 48,       -- request.expires_at
   note           TEXT,
   created_at     TEXT NOT NULL,
@@ -115,6 +119,21 @@ CREATE INDEX IF NOT EXISTS idx_tasks_command ON tasks(command_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_account_day ON tasks(account_id, dispatched_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_campaign_contact
   ON tasks(campaign_id, contact_id);
+
+-- Глобальная история касаний: кому мы вообще писали, независимо от кампании.
+-- Без неё вторая кампания на пересекающийся сегмент шлёт человеку второе
+-- «первое касание», и нередко с другого аккаунта — со стороны получателя это
+-- выглядит как рассылка веером. Уникальность tasks держит только пару
+-- (кампания, контакт) и поперёк кампаний не защищает.
+CREATE TABLE IF NOT EXISTS contact_touches (
+  contact_id       TEXT PRIMARY KEY REFERENCES contacts(id),
+  first_sent_at    TEXT NOT NULL,
+  last_sent_at     TEXT NOT NULL,
+  sent_count       INTEGER NOT NULL DEFAULT 1,
+  last_account_id  INTEGER,
+  last_campaign_id TEXT,
+  last_task_id     TEXT
+);
 
 -- Зеркало входящего фида Radar.
 CREATE TABLE IF NOT EXISTS inbound (
@@ -232,7 +251,13 @@ class Store:
 
     #: Колонки, добавленные после первой версии схемы. `CREATE TABLE IF NOT
     #: EXISTS` их в уже существующую базу не принесёт, поэтому доливаем руками.
-    LATE_COLUMNS = (("history", "source_ref", "TEXT"),)
+    LATE_COLUMNS = (
+        ("history", "source_ref", "TEXT"),
+        # Момент попытки выпуска, в отличие от dispatched_at заполняется и
+        # тогда, когда мост ответил отказом: попытка всё равно расходует темп.
+        ("tasks", "attempted_at", "TEXT"),
+        ("campaigns", "allow_repeat_contacts", "INTEGER NOT NULL DEFAULT 0"),
+    )
 
     def _ensure_columns(self) -> None:
         for table, column, kind in self.LATE_COLUMNS:

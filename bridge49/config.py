@@ -102,6 +102,13 @@ class Limits:
     #: себе машинный след. Добавка всегда вверх, чтобы план не проваливался
     #: под пол, который диспетчер проверяет на выпуске.
     per_account_visible_jitter_sec: int = 420
+    #: Минимальная пауза между видимыми действиями ЛЮБЫХ аккаунтов, секунды.
+    #: Пол на аккаунт держит ритм внутри одной персоны, но не поперёк флота:
+    #: тринадцать аккаунтов вправе выпустить сообщения одной и той же секундой,
+    #: и со стороны это ровно тот залп, из-за которого всё и началось. Пауза
+    #: берётся случайной в диапазоне min..max, иначе поток ляжет на ровную сетку.
+    global_visible_interval_min_sec: int = 10
+    global_visible_interval_max_sec: int = 20
     #: Сколько всего видимых действий выпускать за один прогон диспетчера.
     dispatch_batch: int = 25
     #: Часы окна отправки в таймзоне кампании (включительно/исключительно).
@@ -120,6 +127,7 @@ class Limits:
 #: зажимаются здесь и об этом сообщается в `doctor`.
 HARD_MAX_DAILY_VISIBLE = 40
 HARD_MIN_INTERVAL_SEC = 300
+HARD_MIN_GLOBAL_INTERVAL_SEC = 5
 HARD_MAX_DISPATCH_BATCH = 50
 HARD_WINDOW_START_HOUR = 8
 HARD_WINDOW_END_HOUR = 22
@@ -147,6 +155,17 @@ def clamp(limits: Limits) -> list[str]:
 
     if int(limits.per_account_visible_jitter_sec) < 0:
         fix("per_account_visible_jitter_sec", 0, "отрицательный разброс")
+
+    global_min = int(limits.global_visible_interval_min_sec)
+    if global_min < HARD_MIN_GLOBAL_INTERVAL_SEC:
+        fix("global_visible_interval_min_sec", HARD_MIN_GLOBAL_INTERVAL_SEC,
+            f"пол: между аккаунтами не меньше {HARD_MIN_GLOBAL_INTERVAL_SEC} с")
+    if int(limits.global_visible_interval_max_sec) < limits.global_visible_interval_min_sec:
+        # Схлопнутый диапазон означал бы «пауза ровно min» без разброса —
+        # молча терять джиттер нельзя, поэтому поправка попадает в notes.
+        fix("global_visible_interval_max_sec",
+            int(limits.global_visible_interval_min_sec),
+            "верхняя граница ниже нижней")
 
     batch = int(limits.dispatch_batch)
     if batch > HARD_MAX_DISPATCH_BATCH:

@@ -264,6 +264,7 @@ def add_campaign(
     daily_cap: int = 50,
     per_account_daily_cap: int = 12,
     params: dict | None = None,
+    allow_repeat_contacts: bool = False,
     ttl_hours: int = 48,
     note: str | None = None,
     campaign_id: str | None = None,
@@ -284,16 +285,20 @@ def add_campaign(
     campaign_id = campaign_id or new_id("cmp")
     store.execute(
         "INSERT INTO campaigns(id, name, action, template_id, segment, mode, "
-        "daily_cap, per_account_daily_cap, params, ttl_hours, note, "
-        "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "daily_cap, per_account_daily_cap, params, allow_repeat_contacts, "
+        "ttl_hours, note, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(id) DO UPDATE SET name=excluded.name, action=excluded.action, "
         "template_id=excluded.template_id, segment=excluded.segment, "
         "mode=excluded.mode, daily_cap=excluded.daily_cap, "
         "per_account_daily_cap=excluded.per_account_daily_cap, "
-        "params=excluded.params, ttl_hours=excluded.ttl_hours, note=excluded.note, "
+        "params=excluded.params, "
+        "allow_repeat_contacts=excluded.allow_repeat_contacts, "
+        "ttl_hours=excluded.ttl_hours, note=excluded.note, "
         "updated_at=excluded.updated_at",
         (campaign_id, name, action, template_id, segment, mode, int(daily_cap),
-         int(per_account_daily_cap), dumps(params or {}), int(ttl_hours), note,
+         int(per_account_daily_cap), dumps(params or {}),
+         1 if allow_repeat_contacts else 0, int(ttl_hours), note,
          now(), now()),
     )
     store.log(actor, "campaigns.upsert", campaign_id, f"{name} / {action}")

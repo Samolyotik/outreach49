@@ -1,0 +1,10 @@
+[Unit]
+Description=outreach49 сторож каждые 2 минуты
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

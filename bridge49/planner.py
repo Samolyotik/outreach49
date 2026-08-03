@@ -181,13 +181,26 @@ def plan(
             f"Действие требует роль из {sorted(action.roles)}."
         )
 
-    contacts = store.query(
+    # Видимое действие получает только тот, кому мы ещё не писали: `tasks`
+    # хранит уникальность лишь внутри кампании, и второй сегмент, пересекающийся
+    # с первым, иначе принесёт человеку второе «первое касание». Догоняющая
+    # волна включает повтор явно — ключом allow_repeat_contacts в кампании.
+    repeat_allowed = bool(
+        not action.visible or campaign.get("allow_repeat_contacts")
+    )
+    sql = (
         "SELECT c.* FROM contacts c "
         "WHERE c.opted_out = 0 AND c.segment = ? "
         "  AND NOT EXISTS (SELECT 1 FROM tasks t "
         "                  WHERE t.campaign_id = ? AND t.contact_id = c.id) "
-        "ORDER BY c.created_at, c.id",
-        (campaign["segment"], campaign_id),
+    )
+    if not repeat_allowed:
+        sql += (
+            "  AND NOT EXISTS (SELECT 1 FROM contact_touches ct "
+            "                  WHERE ct.contact_id = c.id) "
+        )
+    contacts = store.query(
+        sql + "ORDER BY c.created_at, c.id", (campaign["segment"], campaign_id)
     )
     if limit:
         contacts = contacts[: int(limit)]

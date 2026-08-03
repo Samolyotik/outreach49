@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, config, dispatcher, entities, planner, pollers, radar  # noqa: E402
+from bridge49 import catalog, config, dispatcher, entities, planner, pollers, radar, watchdog  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
@@ -66,8 +66,14 @@ SNAPSHOT = [
 def make_env(tmp: Path) -> tuple[Store, Settings]:
     store = Store(tmp / "b.sqlite")
     accounts_mod.sync(store, SNAPSHOT)
+    limits = Limits()
+    # Паузу флота тесты выключают: диспетчер её честно высыпает, и с боевыми
+    # 10–20 секундами прогон растянулся бы на минуты. Её собственное поведение
+    # проверяется отдельно, в FleetPaceTests.
+    limits.global_visible_interval_min_sec = 0
+    limits.global_visible_interval_max_sec = 0
     settings = Settings(
-        home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+        home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=limits,
         timezone="Europe/Moscow",
     )
     return store, settings
@@ -1150,8 +1156,8 @@ class PaceFloorTests(unittest.TestCase):
 
     def test_pause_is_measured_per_account(self):
         run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
-        self.assertIsNotNone(dispatcher.last_visible_dispatch_at(self.store, 821))
-        self.assertIsNone(dispatcher.last_visible_dispatch_at(self.store, 803))
+        self.assertIsNotNone(dispatcher.last_visible_attempt_at(self.store, 821))
+        self.assertIsNone(dispatcher.last_visible_attempt_at(self.store, 803))
 
     def test_zero_interval_disables_the_pause(self):
         self.settings.limits.per_account_visible_interval_sec = 0
@@ -1297,6 +1303,307 @@ class LimitsFloorTests(unittest.TestCase):
         self.assertEqual(settings.limits.per_account_daily_visible, 12)
         self.assertEqual(settings.limits.per_account_visible_interval_sec, 900)
         self.assertEqual(settings.limits.dispatch_batch, 25)
+
+
+def _seed_campaign(store, settings, *, contacts: int, campaign_id: str,
+                   segment: str, allow_repeat: bool = False,
+                   account_id: int = 821) -> None:
+    """Кампания с созревшими задачами на одном аккаунте."""
+    if not store.one("SELECT id FROM templates WHERE id = 't1'"):
+        entities.add_template(store, "t", "Привет, {name}!", template_id="t1")
+    entities.add_campaign(
+        store, name=campaign_id, action="send_private_dm", template_id="t1",
+        segment=segment, campaign_id=campaign_id, per_account_daily_cap=99,
+        daily_cap=99, allow_repeat_contacts=allow_repeat,
+    )
+    entities.set_campaign_status(store, campaign_id, "active")
+    for i in range(contacts):
+        entities.add_contact(store, username=f"{segment}_lead{i}",
+                             display_name=f"Имя{i}", segment=segment)
+    planner.plan(store, campaign_id, limits=settings.limits, dry_run=False)
+    store.execute(
+        "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00', "
+        "account_id = ? WHERE campaign_id = ?", (account_id, campaign_id),
+    )
+    store.commit()
+
+
+class FleetPaceTests(unittest.TestCase):
+    """Пауза между аккаунтами: отправки не должны складываться в залп."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        limits = self.settings.limits
+        limits.global_visible_interval_min_sec = 10
+        limits.global_visible_interval_max_sec = 20
+        limits.per_account_visible_interval_sec = 0
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        _seed_campaign(self.store, self.settings, contacts=3,
+                       campaign_id="fleet", segment="fl")
+        dispatcher.arm(self.settings, True)
+        self.slept: list[float] = []
+
+        async def fake_sleep(seconds):
+            # Моделируем течение времени: без этого пауза так и висела бы в
+            # будущем, и проверялось бы не ожидание, а его отсутствие.
+            self.slept.append(seconds)
+            past = datetime.now(timezone.utc) - timedelta(seconds=1)
+            self.store.set_state(dispatcher.GLOBAL_NEXT_KEY, past.isoformat())
+            self.store.commit()
+
+        self._real_sleep = dispatcher.asyncio.sleep
+        dispatcher.asyncio.sleep = fake_sleep
+
+    def tearDown(self):
+        dispatcher.asyncio.sleep = self._real_sleep
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_batch_goes_out_but_waits_between_sends(self):
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        # Батч не режется: пауза выдерживается ожиданием, а не пропуском.
+        self.assertEqual(result["dispatched"], 3)
+        self.assertEqual(len(self.slept), 2)
+        for waited in self.slept:
+            self.assertGreaterEqual(waited, 1)
+            self.assertLessEqual(waited, 21)
+
+    def test_pause_survives_the_run(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        self.assertIsNotNone(dispatcher.global_next_visible_at(self.store))
+
+    def test_absurd_pause_defers_instead_of_sleeping(self):
+        self.settings.limits.global_visible_interval_min_sec = 3600
+        self.settings.limits.global_visible_interval_max_sec = 3600
+        result = run_dispatch(self.store, self.settings, FakeEnqueueBridge(),
+                              confirm=True)
+        self.assertEqual(result["dispatched"], 1)
+        self.assertTrue(result["deferred"], result)
+        self.assertEqual(self.slept, [])
+
+    def test_preview_does_not_apply_the_fleet_pause(self):
+        # Пауза висит в будущем, но предпросмотр отвечает на вопрос «что уйдёт
+        # за прогон», а уйдёт весь батч — просто с ожиданием между отправками.
+        future = datetime.now(timezone.utc) + timedelta(seconds=30)
+        self.store.set_state(dispatcher.GLOBAL_NEXT_KEY, future.isoformat())
+        self.store.commit()
+        result = asyncio.run(
+            dispatcher.dispatch(self.store, self.settings, confirm=False)
+        )
+        self.assertEqual(result["would_dispatch"], 3)
+
+
+class ContactTouchTests(unittest.TestCase):
+    """Одному человеку — одно первое касание, сколько бы кампаний ни было."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        limits = self.settings.limits
+        limits.per_account_visible_interval_sec = 0
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        _seed_campaign(self.store, self.settings, contacts=2,
+                       campaign_id="first", segment="tw")
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _second_campaign(self, allow_repeat: bool = False) -> None:
+        entities.add_campaign(
+            self.store, name="second", action="send_private_dm",
+            template_id="t1", segment="tw", campaign_id="second",
+            per_account_daily_cap=99, daily_cap=99,
+            allow_repeat_contacts=allow_repeat,
+        )
+        entities.set_campaign_status(self.store, "second", "active")
+        planner.plan(self.store, "second", limits=self.settings.limits,
+                     dry_run=False)
+        self.store.execute(
+            "UPDATE tasks SET scheduled_at = '2000-01-01T00:00:00+00:00', "
+            "account_id = 821 WHERE campaign_id = 'second'"
+        )
+        self.store.commit()
+
+    def test_touch_is_recorded_on_send(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        touched = self.store.query("SELECT contact_id FROM contact_touches")
+        self.assertEqual(len(touched), 2)
+
+    def test_second_campaign_does_not_plan_touched_contacts(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        self._second_campaign()
+        planned = self.store.query(
+            "SELECT id FROM tasks WHERE campaign_id = 'second'"
+        )
+        self.assertEqual(planned, [])
+
+    def test_repeat_is_blocked_even_if_a_task_appears_anyway(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        # Задача мимо планировщика: правка руками, импорт, повторный plan.
+        contact = self.store.one("SELECT contact_id FROM contact_touches")
+        self._second_campaign(allow_repeat=True)
+        self.store.execute(
+            "UPDATE campaigns SET allow_repeat_contacts = 0 WHERE id = 'second'"
+        )
+        self.store.commit()
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(bridge.calls, [])
+        self.assertTrue(
+            any("уже писали" in b["why"] for b in result["blocked"]),
+            result["blocked"],
+        )
+        self.assertTrue(contact)
+
+    def test_explicit_allow_repeat_lets_the_second_wave_through(self):
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        self._second_campaign(allow_repeat=True)
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 2)
+
+
+class FailedAttemptTests(unittest.TestCase):
+    """Отказ моста расходует темп: иначе череда ошибок разгоняет отправку."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        limits = self.settings.limits
+        limits.per_account_visible_interval_sec = 900
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        _seed_campaign(self.store, self.settings, contacts=3,
+                       campaign_id="fail", segment="fa")
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_rejected_attempt_holds_the_account(self):
+        bridge = FakeEnqueueBridge(error=radar.BridgeRejected("нельзя"))
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        # Отказ пришёл один раз, дальше аккаунт держит пауза.
+        self.assertEqual(len(bridge.calls), 1)
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertTrue(
+            any("меньше 900" in b["why"] for b in result["blocked"]),
+            result["blocked"],
+        )
+
+    def test_attempt_counts_towards_the_daily_budget(self):
+        bridge = FakeEnqueueBridge(error=radar.BridgeRejected("нельзя"))
+        run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(dispatcher.visible_sent_today(self.store, 821), 1)
+
+    def test_unknown_outcome_also_records_the_touch(self):
+        bridge = FakeEnqueueBridge(error=radar.BridgeUnknown("таймаут"))
+        run_dispatch(self.store, self.settings, bridge, confirm=True)
+        # Исход неизвестен: считаем, что дошло, и повторно не пишем.
+        self.assertEqual(
+            len(self.store.query("SELECT contact_id FROM contact_touches")), 1
+        )
+
+    def test_rejected_attempt_does_not_record_a_touch(self):
+        bridge = FakeEnqueueBridge(error=radar.BridgeRejected("нельзя"))
+        run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(self.store.query("SELECT contact_id FROM contact_touches"), [])
+
+
+class WatchdogTests(unittest.TestCase):
+    """Тишина контура неотличима от нормы — сторож смотрит на давность."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _run(self):
+        return asyncio.run(
+            watchdog.run(self.store, self.settings, with_bridge=False)
+        )
+
+    def _poll_logged(self, *, minutes_ago: int) -> None:
+        moment = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        self.store.execute(
+            "INSERT INTO events(at, actor, kind, subject, detail) "
+            "VALUES(?, 'timer', 'poll.inbound', '', '')",
+            (moment.isoformat(),),
+        )
+        self.store.commit()
+
+    def test_silent_poller_is_critical(self):
+        self._poll_logged(minutes_ago=30)
+        result = self._run()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.worst, watchdog.CRITICAL)
+        self.assertTrue(any(f.check == "поллер" for f in result.findings))
+
+    def test_fresh_poll_is_quiet(self):
+        self._poll_logged(minutes_ago=0)
+        result = self._run()
+        self.assertTrue(result.ok, result.as_dict())
+
+    def test_never_polled_is_critical(self):
+        result = self._run()
+        self.assertEqual(result.worst, watchdog.CRITICAL)
+
+    def test_armed_without_accounts_is_high(self):
+        self._poll_logged(minutes_ago=0)
+        self.store.execute("UPDATE accounts SET paused = 1")
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+        result = self._run()
+        self.assertEqual(result.worst, watchdog.HIGH)
+        self.assertTrue(any(f.check == "аккаунты" for f in result.findings))
+
+    def test_stale_handoff_is_only_a_warning(self):
+        self._poll_logged(minutes_ago=0)
+        old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, surface, created_at, "
+            "updated_at) VALUES('th1', 821, '@x', 'private_dm', ?, ?)",
+            (old, old),
+        )
+        self.store.execute(
+            "INSERT INTO handoffs(id, thread_id, reason, status, created_at, "
+            "updated_at) VALUES('h1', 'th1', 'ответ', 'new', ?, ?)",
+            (old, old),
+        )
+        self.store.commit()
+        result = self._run()
+        self.assertEqual(result.worst, watchdog.WARNING)
+
+    def test_state_file_is_written(self):
+        self._poll_logged(minutes_ago=0)
+        self._run()
+        payload = json.loads(
+            (self.settings.home / "var" / "watchdog.json").read_text("utf-8")
+        )
+        self.assertTrue(payload["ok"])
+        self.assertIn("last_poll_at", payload["facts"])
+
+    def test_only_state_changes_are_logged(self):
+        self._poll_logged(minutes_ago=0)
+        self._run()
+        self._run()
+        events = self.store.query(
+            "SELECT id FROM events WHERE kind = 'watchdog'"
+        )
+        self.assertEqual(len(events), 1)
 
 
 if __name__ == "__main__":

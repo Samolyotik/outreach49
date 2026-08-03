@@ -19,7 +19,9 @@ UUID и тем же каноническим request. Контракт мост�
 """
 from __future__ import annotations
 
+import asyncio
 import fcntl
+import random
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +49,25 @@ VISIBLE_ACTIONS = tuple(
 
 class DispatchBlocked(RuntimeError):
     """Задачу нельзя выпускать прямо сейчас. Задача остаётся запланированной."""
+
+
+class DispatchTooEarly(DispatchBlocked):
+    """Ещё не истекла пауза флота — это «пока рано», а не «нельзя».
+
+    Отдельный тип нужен, чтобы боевой цикл выждал паузу и всё-таки выпустил
+    задачу. Если бы такая задача просто блокировалась, за прогон уходило бы
+    ровно одно сообщение, и пауза между аккаунтами превратилась бы в потолок
+    пропускной способности.
+    """
+
+    def __init__(self, message: str, *, wait_seconds: int) -> None:
+        super().__init__(message)
+        self.wait_seconds = int(wait_seconds)
+
+
+#: Дольше этого внутри одного прогона не ждём: пауза флота исчисляется
+#: секундами, и большее значение означает не темп, а перекос в настройках.
+MAX_INLINE_WAIT_SEC = 60
 
 
 class DispatchBusy(RuntimeError):
@@ -78,7 +99,8 @@ def due_tasks(store: Store, *, campaign_id: str | None = None,
               limit: int = 50) -> list[dict]:
     """Задачи, которым пора: время пришло."""
     sql = (
-        "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name "
+        "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name, "
+        "c.allow_repeat_contacts AS campaign_allow_repeat "
         "FROM tasks t JOIN campaigns c ON c.id = t.campaign_id "
         "WHERE t.state = 'planned' AND t.scheduled_at <= ? "
     )
@@ -104,7 +126,8 @@ def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
     паузу кампании.
     """
     sql = (
-        "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name "
+        "SELECT t.*, c.status AS campaign_status, c.name AS campaign_name, "
+        "c.allow_repeat_contacts AS campaign_allow_repeat "
         "FROM tasks t JOIN campaigns c ON c.id = t.campaign_id "
         "WHERE t.state = 'planned' AND t.request_id IS NOT NULL "
     )
@@ -123,36 +146,41 @@ def orphaned(store: Store, *, campaign_id: str | None = None) -> list[dict]:
 
 
 def visible_sent_today(store: Store, account_id: int) -> int:
-    """Сколько видимых действий аккаунт уже выпустил за сегодня.
+    """Сколько видимых действий аккаунт уже израсходовал за сегодня.
 
     Считаем только видимые: read и soft собеседник не наблюдает, и лимит на
     них не распространяется — значит и бюджет они тратить не должны.
+
+    Отказ моста расходует дневной бюджет наравне с удачной отправкой: со
+    стороны Telegram это была попытка, и подставлять вместо неё следующую
+    было бы ровно тем ускорением, от которого мы защищаемся. Поэтому берётся
+    `attempted_at`, когда `dispatched_at` пуст, а состояние не фильтруется:
+    задача без обеих отметок до моста не дошла и в счёт не идёт сама собой.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
     row = store.one(
         "SELECT count(*) AS n FROM tasks "
         f"WHERE account_id = ? AND action IN ({placeholders}) "
-        "  AND substr(dispatched_at, 1, 10) = ? "
-        "  AND state NOT IN ('cancelled', 'blocked')",
+        "  AND substr(COALESCE(dispatched_at, attempted_at), 1, 10) = ?",
         (int(account_id), *VISIBLE_ACTIONS, today),
     )
     return int(row["n"])
 
 
-def last_visible_dispatch_at(store: Store, account_id: int) -> datetime | None:
-    """Когда аккаунт в последний раз реально выпускал видимое действие.
+def last_visible_attempt_at(store: Store, account_id: int) -> datetime | None:
+    """Когда аккаунт в последний раз обращался к мосту за видимым действием.
 
-    Читаем `dispatched_at`, а не `scheduled_at`: пол меряется от факта
-    отправки. Задача, пролежавшая в плане сутки, не даёт аккаунту права
-    отправить две подряд.
+    Читаем отметку попытки, а не `scheduled_at`: пол меряется от факта
+    обращения. Задача, пролежавшая в плане сутки, не даёт аккаунту права
+    отправить две подряд, а неудачная попытка не даёт права попробовать
+    снова немедленно.
     """
     placeholders = ",".join("?" * len(VISIBLE_ACTIONS))
     row = store.one(
-        "SELECT max(dispatched_at) AS last FROM tasks "
+        "SELECT max(COALESCE(dispatched_at, attempted_at)) AS last FROM tasks "
         f"WHERE account_id = ? AND action IN ({placeholders}) "
-        "  AND dispatched_at IS NOT NULL "
-        "  AND state NOT IN ('cancelled', 'blocked')",
+        "  AND COALESCE(dispatched_at, attempted_at) IS NOT NULL",
         (int(account_id), *VISIBLE_ACTIONS),
     )
     if not row or not row["last"]:
@@ -161,6 +189,70 @@ def last_visible_dispatch_at(store: Store, account_id: int) -> datetime | None:
         return datetime.fromisoformat(str(row["last"]))
     except ValueError:
         return None
+
+
+#: Ключ в `state`, хранящий момент, раньше которого не выпускает НИКТО.
+GLOBAL_NEXT_KEY = "global_next_visible_at"
+
+
+def global_next_visible_at(store: Store) -> datetime | None:
+    """Момент, раньше которого ни один аккаунт не выпускает видимое действие."""
+    raw = store.get_state(GLOBAL_NEXT_KEY, "") or ""
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _plan_global_pause(settings: Settings, rng: random.Random | None = None) -> str:
+    """Отложить следующий выпуск флота на случайную паузу из диапазона."""
+    limits = settings.limits
+    low = max(0, int(limits.global_visible_interval_min_sec))
+    high = max(low, int(limits.global_visible_interval_max_sec))
+    delay = (rng or random).randint(low, high)
+    moment = datetime.now(timezone.utc) + timedelta(seconds=delay)
+    return moment.isoformat()
+
+
+def contact_touch(store: Store, contact_id: str) -> dict | None:
+    """Писали ли мы этому контакту раньше — в любой кампании и с любого аккаунта."""
+    row = store.one(
+        "SELECT contact_id, first_sent_at, last_sent_at, sent_count, "
+        "       last_account_id, last_campaign_id "
+        "FROM contact_touches WHERE contact_id = ?",
+        (str(contact_id),),
+    )
+    return dict(row) if row else None
+
+
+def record_contact_touch(store: Store, task: dict) -> None:
+    """Отметить касание контакта. Повторный вызов только наращивает счётчик."""
+    stamp = now()
+    store.execute(
+        "INSERT INTO contact_touches(contact_id, first_sent_at, last_sent_at, "
+        "  sent_count, last_account_id, last_campaign_id, last_task_id) "
+        "VALUES(?,?,?,1,?,?,?) "
+        "ON CONFLICT(contact_id) DO UPDATE SET "
+        "  last_sent_at = excluded.last_sent_at, "
+        "  sent_count = sent_count + 1, "
+        "  last_account_id = excluded.last_account_id, "
+        "  last_campaign_id = excluded.last_campaign_id, "
+        "  last_task_id = excluded.last_task_id",
+        (str(task["contact_id"]), stamp, stamp, int(task["account_id"]),
+         task.get("campaign_id"), task.get("id")),
+    )
+
+
+def campaign_allows_repeat(task: dict) -> bool:
+    """Разрешила ли кампания писать тем, кого уже касались.
+
+    Повтор — это осознанное решение (догоняющая волна, другой оффер), поэтому
+    он включается явным флагом кампании, а не выводится из того, что задача
+    почему-то оказалась в очереди.
+    """
+    return bool(task.get("campaign_allow_repeat"))
 
 
 def inside_send_window(settings: Settings, moment: datetime | None = None) -> bool:
@@ -185,14 +277,16 @@ def preflight(
     *,
     spent: dict[int, int] | None = None,
     recent: dict[int, datetime] | None = None,
+    touched: set[str] | None = None,
+    enforce_global_pause: bool = True,
 ) -> catalog.Action:
     """Все проверки, которые дешевле сделать до обращения к базе.
 
-    ``spent`` и ``recent`` нужны только предпросмотру: там ничего не пишется в
-    базу, и без накопительных счётчиков лимит и пауза выглядели бы
-    замороженными — предпросмотр показал бы весь батч как готовый к выпуску.
-    В боевом цикле их не передают: там после каждой отправки коммитится
-    `dispatched_at`, и запрос к базе сам по себе актуален.
+    ``spent``, ``recent``, ``global_recent`` и ``touched`` нужны только
+    предпросмотру: там ничего не пишется в базу, и без накопительных счётчиков
+    лимит, паузы и дедуп выглядели бы замороженными — предпросмотр показал бы
+    весь батч как готовый к выпуску. В боевом цикле их не передают: там после
+    каждой попытки коммитятся отметки, и запрос к базе сам по себе актуален.
     """
     if task.get("campaign_status") not in (None, "active"):
         raise DispatchBlocked(
@@ -235,6 +329,38 @@ def preflight(
                 f"({settings.limits.send_window_start_hour}:00–"
                 f"{settings.limits.send_window_end_hour}:00 {settings.timezone})"
             )
+
+        # Одному человеку — одно первое касание, даже если кампаний несколько.
+        # Уникальность в tasks держит только пару (кампания, контакт), поэтому
+        # второй сегмент, пересекающийся с первым, без этой проверки написал бы
+        # тем же людям повторно и, скорее всего, с другого аккаунта.
+        if not campaign_allows_repeat(task):
+            contact_id = str(task["contact_id"])
+            touch = contact_touch(store, contact_id)
+            if touch is None and touched is not None and contact_id in touched:
+                touch = {"last_sent_at": "в этом же батче", "last_account_id": "—"}
+            if touch is not None:
+                raise DispatchBlocked(
+                    f"контакту уже писали ({touch['last_sent_at']}, аккаунт "
+                    f"{touch['last_account_id']}); чтобы это было намеренно, "
+                    "поставьте кампании allow_repeat_contacts"
+                )
+
+        # Пауза поперёк флота: аккаунтов много, и без неё их отправки
+        # складываются в залп, даже когда каждый по отдельности выдержал свой
+        # интервал. Предпросмотр её не применяет — он отвечает на вопрос «что
+        # уйдёт за прогон», а уйдёт всё, просто с паузами между отправками.
+        blocked_until = global_next_visible_at(store) if enforce_global_pause else None
+        if blocked_until is not None:
+            wait = (blocked_until - datetime.now(timezone.utc)).total_seconds()
+            if wait > 0:
+                raise DispatchTooEarly(
+                    f"по флоту только что отправляли — ждём ещё {int(wait) + 1} с "
+                    f"(пауза {settings.limits.global_visible_interval_min_sec}–"
+                    f"{settings.limits.global_visible_interval_max_sec} с)",
+                    wait_seconds=int(wait) + 1,
+                )
+
         already = visible_sent_today(store, account_id)
         already += int((spent or {}).get(account_id, 0))
         if already >= settings.limits.per_account_daily_visible:
@@ -250,7 +376,7 @@ def preflight(
         # случаев, иначе весь пакет уедет одной секундой.
         interval = int(settings.limits.per_account_visible_interval_sec or 0)
         if interval > 0:
-            last = last_visible_dispatch_at(store, account_id)
+            last = last_visible_attempt_at(store, account_id)
             simulated = (recent or {}).get(account_id)
             if simulated is not None and (last is None or simulated > last):
                 last = simulated
@@ -315,6 +441,24 @@ async def dispatch(
                     armed=armed, confirmed=confirm)
 
 
+def _mark_attempt(
+    store: Store, task: dict, settings: Settings, *, visible: bool
+) -> None:
+    """Отметить обращение к мосту и сдвинуть паузу флота.
+
+    Коммитим сразу: если процесс упадёт следующей строкой, отметка о попытке
+    и пауза должны пережить падение — иначе перезапуск выпустит следующую
+    задачу немедленно.
+    """
+    store.execute(
+        "UPDATE tasks SET attempted_at = ?, updated_at = ? WHERE id = ?",
+        (now(), now(), task["id"]),
+    )
+    if visible:
+        store.set_state(GLOBAL_NEXT_KEY, _plan_global_pause(settings))
+    store.commit()
+
+
 def _queue(store: Store, campaign_id: str | None, limit: int) -> list[dict]:
     pending = orphaned(store, campaign_id=campaign_id)
     fresh = due_tasks(store, campaign_id=campaign_id, limit=limit)
@@ -329,11 +473,15 @@ def _preview(
 ) -> dict:
     spent: dict[int, int] = {}
     recent: dict[int, datetime] = {}
+    touched: set[str] = set()
     ready: list[dict] = []
     blocked: list[dict] = []
     for task in _queue(store, campaign_id, limit):
         try:
-            action = preflight(store, task, settings, spent=spent, recent=recent)
+            action = preflight(
+                store, task, settings, spent=spent, recent=recent,
+                touched=touched, enforce_global_pause=False,
+            )
         except DispatchBlocked as exc:
             blocked.append({"task": task["id"], "why": str(exc)})
             continue
@@ -342,6 +490,7 @@ def _preview(
             spent[account_id] = spent.get(account_id, 0) + 1
             # Весь батч ушёл бы одним прогоном, то есть «сейчас».
             recent[account_id] = datetime.now(timezone.utc)
+            touched.add(str(task["contact_id"]))
         ready.append(task)
 
     return {
@@ -370,7 +519,19 @@ async def _dispatch_armed(
             # Проверяем непосредственно перед каждой отправкой, а не заранее
             # для всего батча: иначе дневной лимит внутри прогона заморожен.
             try:
-                preflight(store, task, settings)
+                action = preflight(store, task, settings)
+            except DispatchTooEarly as exc:
+                # Пауза флота — это «пока рано». Ждём её и пробуем ещё раз:
+                # пропустить задачу означало бы выпускать по одной за прогон.
+                if exc.wait_seconds > MAX_INLINE_WAIT_SEC:
+                    deferred.append({"task": task["id"], "why": str(exc)})
+                    break
+                await asyncio.sleep(exc.wait_seconds)
+                try:
+                    action = preflight(store, task, settings)
+                except DispatchBlocked as retry_exc:
+                    blocked.append({"task": task["id"], "why": str(retry_exc)})
+                    continue
             except DispatchBlocked as exc:
                 blocked.append({"task": task["id"], "why": str(exc)})
                 continue
@@ -393,12 +554,17 @@ async def _dispatch_armed(
             try:
                 command_id = await bridge.enqueue(int(task["account_id"]), request)
             except QueueFull as exc:
-                # До вставки дело не дошло; остальной батч ждать смысла нет.
+                # До вставки дело не дошло: команда не создана, темп не
+                # израсходован. Остальной батч ждать смысла нет.
                 deferred.append({"task": task["id"], "why": f"очередь моста полна: {exc}"})
                 _note(store, task["id"], str(exc))
                 break
             except BridgeRejected as exc:
                 # Детерминированный отказ: повтор даст тот же результат.
+                # Попытка всё равно засчитана — иначе следующая задача этого
+                # аккаунта уехала бы немедленно, превратив череду отказов в
+                # ускорение ровно там, где что-то уже пошло не так.
+                _mark_attempt(store, task, settings, visible=action.visible)
                 failed.append({"task": task["id"], "why": str(exc)})
                 store.execute(
                     "UPDATE tasks SET state='blocked', error_code='bridge_rejected', "
@@ -411,10 +577,15 @@ async def _dispatch_armed(
                 # Могло уехать, а могло и нет. Оставляем задачу запланированной
                 # вместе с её UUID — следующий прогон переиграет ТЕМ ЖЕ UUID,
                 # и мост вернёт прежний command_id, если команда всё-таки есть.
+                # Касание отмечаем: раз исход неизвестен, считаем, что дошло.
+                _mark_attempt(store, task, settings, visible=action.visible)
+                if action.visible:
+                    record_contact_touch(store, task)
                 deferred.append({"task": task["id"], "why": str(exc)})
                 _note(store, task["id"], str(exc))
                 continue
 
+            _mark_attempt(store, task, settings, visible=action.visible)
             store.execute(
                 "UPDATE tasks SET state='queued', command_id=?, error_message=NULL, "
                 "dispatched_at=?, updated_at=? WHERE id=?",
@@ -425,6 +596,8 @@ async def _dispatch_armed(
                 "THEN 'contacted' ELSE status END, updated_at = ? WHERE id = ?",
                 (now(), task["contact_id"]),
             )
+            if action.visible:
+                record_contact_touch(store, task)
             store.commit()
             sent += 1
 

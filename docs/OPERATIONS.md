@@ -56,12 +56,20 @@ cd /opt/bridge49 && bin/bridge49 accounts --sync accounts.json
 |---|---|---|
 | каждые 5 минут | `dispatch --confirm` | выпускать созревшие задачи |
 | каждые 15 секунд | `poll` | подтягивать результаты и входящие |
+| каждые 2 минуты | `watchdog` | замечать, что контур замолчал |
 | раз в сутки | `accounts --sync accounts.json` | освежать реестр |
 
 ```bash
 systemctl enable --now outreach49-poll.timer
+systemctl enable --now outreach49-watchdog.timer
 systemctl enable --now outreach49-dispatch.timer
 ```
+
+Сторож не чинит и не останавливает — только смотрит на давность: когда в
+последний раз ходил поллер, отвечает ли мост, не отстал ли курсор входящих, не
+висят ли сутками карточки менеджеру. Итог лежит в `var/watchdog.json`, смена
+состояния попадает в журнал событий, а `critical`/`high` дают ненулевой код
+возврата (`systemctl status outreach49-watchdog` покажет отказ).
 
 ⚠️ Таймер `dispatch` имеет смысл включать только после `arm on`. Без файла
 ARMED он будет просто печатать предпросмотр в журнал.

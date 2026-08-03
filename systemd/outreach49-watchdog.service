@@ -1,0 +1,13 @@
+[Unit]
+Description=outreach49 — сторож: жив ли контур
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Ненулевой код возврата — это critical или high. Предупреждения (нетронутые
+# карточки, зависшие задачи) сервис не роняют: их видно в `watchdog` и в
+# var/watchdog.json, но будить ими systemd незачем.
+ExecStart=/opt/outreach49/bin/bridge49 watchdog
+TimeoutStartSec=120

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import catalog, config, dispatcher, entities, planner, pollers, report
+from . import catalog, config, dispatcher, entities, planner, pollers, report, watchdog
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -350,9 +350,14 @@ def cmd_campaigns(args) -> int:
                 per_account_daily_cap=args.per_account_cap,
                 ttl_hours=args.ttl_hours, note=args.note, campaign_id=args.id,
                 params=json.loads(args.params) if args.params else None,
+                allow_repeat_contacts=bool(args.allow_repeat),
                 actor=args.actor,
             )
             print(f"кампания {campaign['id']}: {campaign['name']}")
+            if args.allow_repeat:
+                print(report.warn(
+                    "кампания будет писать и тем, кому уже писали раньше"
+                ))
             print("дальше: bridge49 plan " + campaign["id"])
             return 0
         if args.status_of:
@@ -541,6 +546,37 @@ def cmd_poll(args) -> int:
             print(report.section("входящие"))
             print(report.kv(sorted(result.items())))
     return 0
+
+
+def cmd_watchdog(args) -> int:
+    """Проверить, что контур жив. Ненулевой код — есть на что смотреть."""
+    settings = _settings(args, need_dsn=not args.offline)
+    with _store(settings) as store:
+        result = asyncio.run(
+            watchdog.run(store, settings, actor=args.actor,
+                         with_bridge=not args.offline)
+        )
+    if args.json:
+        _print_json(result.as_dict())
+    else:
+        print(report.section("сторож"))
+        print(report.kv(sorted(result.facts.items())))
+        if result.ok:
+            print(report.good("всё ровно"))
+        else:
+            for finding in sorted(
+                result.findings,
+                key=lambda f: watchdog.SEVERITY_ORDER.get(f.severity, 9),
+            ):
+                line = f"[{finding.severity}] {finding.check}: {finding.detail}"
+                print(
+                    report.bad(line)
+                    if finding.severity in (watchdog.CRITICAL, watchdog.HIGH)
+                    else report.warn(line)
+                )
+    # Предупреждения не поднимают тревогу systemd: сутки нетронутых карточек —
+    # повод посмотреть, а не повод считать сервис упавшим.
+    return 1 if result.worst in (watchdog.CRITICAL, watchdog.HIGH) else 0
 
 
 def cmd_threads(args) -> int:
@@ -757,6 +793,12 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_doctor
     )
 
+    p = sub.add_parser("watchdog", help="жив ли контур (для таймера)")
+    p.add_argument("--json", action="store_true", help="машинный вывод")
+    p.add_argument("--offline", action="store_true",
+                   help="без обращения к Radar — только локальные проверки")
+    p.set_defaults(func=cmd_watchdog)
+
     p = sub.add_parser("accounts", help="реестр аккаунтов")
     p.add_argument("--sync", metavar="FILE", help="влить снимок из JSON")
     p.add_argument("--pause-new", action="store_true",
@@ -802,6 +844,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--per-account-cap", type=int, default=12)
     p.add_argument("--ttl-hours", type=int, default=48)
     p.add_argument("--params", help="доп. params одной JSON-строкой")
+    p.add_argument("--allow-repeat", action="store_true",
+                   help="писать и тем, кого уже касались (догоняющая волна)")
     p.add_argument("--note")
     p.add_argument("--id")
     p.add_argument("--status-of", metavar="CAMPAIGN_ID")
