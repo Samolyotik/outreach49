@@ -336,16 +336,25 @@ class LlmBoundaryTests(unittest.TestCase):
                                        segment="inbound", actor="test")
         thread_id = new_id("thread")
         self.store.execute(
+            # last_outbound_at обязателен: без него диалог считается чужим и
+            # проход отдаст его менеджеру, не дойдя до модели.
             "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
-            "state, created_at, updated_at) "
-            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
-            (thread_id, contact["id"], now(), now()),
+            "state, last_outbound_at, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?,?)",
+            (thread_id, contact["id"], now(), now(), now()),
         )
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
             "peer_username, text, raw, created_at) "
             "VALUES(7001,821,'private_dm','@someone','someone',?,'{}',?)",
             ("Сколько стоит?", now()),
+        )
+        # Разговор начали мы — иначе сработают ворота на посторонних и до
+        # модели дело не дойдёт. Сами ворота проверяются в StrangerGateTests.
+        self.store.execute(
+            "INSERT INTO history(id, thread_id, direction, text, sent_at, "
+            "created_at) VALUES(?,?,'outbound','Здравствуйте!',?,?)",
+            (new_id("hist"), thread_id, now(), now()),
         )
         self.store.commit()
 
@@ -403,3 +412,89 @@ class LlmBoundaryTests(unittest.TestCase):
         )
         card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
         self.assertIsNotNone(card, "должна остаться карточка менеджеру")
+
+
+class StrangerGateTests(unittest.TestCase):
+    """Отвечаем только там, где первое слово было нашим."""
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+
+        contact = entities.add_contact(self.store, username="stranger",
+                                       segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@stranger',?,'private_dm','open',?,?)",
+            (self.thread_id, self.contact_id, now(), now()),
+        )
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, raw, created_at) "
+            "VALUES(8001,821,'private_dm','@stranger','stranger',?,'{}',?)",
+            ("سلام خوبی؟", now()),
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def exploding_model(self):
+        def caller(*args, **kwargs):
+            raise AssertionError("модель не должна вызываться для постороннего")
+        return caller
+
+    def test_a_stranger_gets_a_card_and_no_model_call(self):
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["strangers"], 1)
+        self.assertEqual(result["queued"], 0)
+        card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
+        self.assertEqual(card["reason"], "входящее от постороннего")
+
+    def test_prior_history_makes_it_ours(self):
+        self.store.execute(
+            "INSERT INTO history(id, thread_id, direction, text, sent_at, "
+            "created_at) VALUES(?,?,'outbound','Здравствуйте!',?,?)",
+            (new_id("hist"), self.thread_id, now(), now()),
+        )
+        self.store.commit()
+        thread = dict(self.store.one("SELECT * FROM threads WHERE id = ?",
+                                     (self.thread_id,)))
+
+        self.assertTrue(autoreply.we_started_it(self.store, thread))
+
+    def test_the_gate_can_be_opened_deliberately(self):
+        """С открытыми воротами входящее идёт обычным путём — через движок.
+
+        На этом тексте видно, что предохранителей два и они независимы: ворота
+        пропустили постороннего, но движок сам подавил сообщение на чужом языке
+        (`intent=spam`, `inbound_non_russian_suppressed`) и отвечать не стал.
+        Карточки при этом тоже нет — в отличие от закрытых ворот, где менеджер
+        узнал бы о письме.
+        """
+        self.settings.autoreply_strangers_file.touch()
+
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["strangers"], 0, "ворота должны были открыться")
+        self.assertEqual(result["queued"], 0, "движок подавляет чужой язык сам")
+        self.assertIsNone(
+            self.store.one("SELECT id FROM handoffs WHERE status = 'new'")
+        )

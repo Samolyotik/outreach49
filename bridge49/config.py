@@ -308,6 +308,20 @@ class Settings:
         return self.autoreply_file.exists()
 
     @property
+    def autoreply_strangers_file(self) -> Path:
+        """Разрешить машине отвечать тем, кому мы не писали первыми.
+
+        Выключено, потому что на аккаунтах остались собеседники прежних
+        владельцев: они пишут не нам. Включать имеет смысл, когда пойдут
+        обращения по нашим собственным ссылкам.
+        """
+        return self.home / "var" / "AUTOREPLY_STRANGERS"
+
+    @property
+    def autoreply_strangers(self) -> bool:
+        return self.autoreply_strangers_file.exists()
+
+    @property
     def accounts_snapshot(self) -> Path:
         return self.home / "accounts.json"
 

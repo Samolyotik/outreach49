@@ -68,10 +68,13 @@ class AutoReplyError(RuntimeError):
 
 
 def thread_for(store: Store, inbound: dict) -> dict | None:
-    return store.one(
+    """Диалог по входящему. Возвращаем словарь, а не строку курсора: у
+    ``sqlite3.Row`` нет ``get``, а необязательные поля читаются именно так."""
+    row = store.one(
         "SELECT * FROM threads WHERE account_id = ? AND peer_key = ?",
         (int(inbound["account_id"]), inbound["peer_key"]),
     )
+    return dict(row) if row is not None else None
 
 
 def conversation_history(store: Store, thread: dict) -> list[dict[str, str]]:
@@ -129,6 +132,36 @@ def conversation_history(store: Store, thread: dict) -> list[dict[str, str]]:
 
     rows.sort(key=lambda item: item[0])
     return [item for _stamp, item in rows if item["text"].strip()]
+
+
+def we_started_it(store: Store, thread: dict) -> bool:
+    """Начинали ли мы этот разговор.
+
+    На аккаунтах остались собеседники прежних владельцев: они пишут не нам и
+    не про нас. Машине отвечать им нечего — она либо ответит по-русски тому,
+    кто спрашивал про аренду на фарси, либо начнёт продавать ТГ РАДАР
+    человеку, который нас не искал. И то и другое — переписка с посторонними
+    от нашего имени.
+
+    Поэтому автоответ работает только там, где первое слово было нашим:
+    перенесённая история, наша отправленная задача или отметка исходящего в
+    диалоге. Остальное уходит менеджеру карточкой — ровно как было до
+    появления автоответов, то есть хуже не становится.
+
+    Ослабить это можно файлом ``var/AUTOREPLY_STRANGERS`` — тогда движок
+    возьмётся и за пришедших самостоятельно.
+    """
+    if thread.get("last_outbound_at"):
+        return True
+    if store.one(
+        "SELECT 1 FROM history WHERE thread_id = ? AND direction = 'outbound' LIMIT 1",
+        (thread["id"],),
+    ):
+        return True
+    return store.one(
+        "SELECT 1 FROM tasks WHERE contact_id = ? AND state = 'done' LIMIT 1",
+        (thread["contact_id"],),
+    ) is not None
 
 
 def auto_reply_count(store: Store, thread: dict) -> int:
@@ -434,8 +467,22 @@ def run(
     if not settings.autoreply_enabled:
         return {"enabled": False, "handled": 0, "queued": 0, "failed": 0}
 
-    handled = queued = failed = 0
+    handled = queued = failed = strangers = 0
     for inbound in pending(store, limit):
+        thread = thread_for(store, inbound)
+        if thread is not None and not (
+            settings.autoreply_strangers or we_started_it(store, thread)
+        ):
+            # Модель даже не зовём: посторонним отвечать нечего, а вызов стоит
+            # денег и минуты. Менеджер увидит карточку, как и раньше.
+            open_handoff(store, thread, "входящее от постороннего",
+                         str(inbound.get("text") or "")[:300])
+            store.execute("UPDATE inbound SET handled = 1 WHERE id = ?",
+                          (int(inbound["id"]),))
+            store.commit()
+            strangers += 1
+            handled += 1
+            continue
         try:
             result = handle(
                 store, inbound,
@@ -463,7 +510,8 @@ def run(
         store.commit()
 
     store.log(actor, "autoreply.run", "",
-              f"разобрано={handled} поставлено={queued} ошибок={failed}")
+              f"разобрано={handled} поставлено={queued} ошибок={failed} "
+              f"посторонних={strangers}")
     store.commit()
     return {"enabled": True, "handled": handled, "queued": queued,
-            "failed": failed}
+            "failed": failed, "strangers": strangers}
