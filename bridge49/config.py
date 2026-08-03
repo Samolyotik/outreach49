@@ -14,7 +14,7 @@ from pathlib import Path
 DEFAULT_SECRET_PATH = Path("/var/lib/tgradar-outreach/secrets/tgr_bridge.env")
 
 #: Корень установки. Переопределяется переменной BRIDGE49_HOME.
-DEFAULT_HOME = Path("/opt/bridge49")
+DEFAULT_HOME = Path("/opt/outreach49")
 
 #: Бизнес наших TGR-аккаунтов.
 DEFAULT_BUSINESS_ID = 51

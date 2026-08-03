@@ -1304,6 +1304,11 @@ class LimitsFloorTests(unittest.TestCase):
         self.assertEqual(settings.limits.per_account_visible_interval_sec, 900)
         self.assertEqual(settings.limits.dispatch_batch, 25)
 
+    def test_default_home_is_our_installation(self):
+        # Форк унаследовал /opt/bridge49, и команда, запущенная без
+        # BRIDGE49_HOME, открывала базу чужого контура — с записью в неё.
+        self.assertEqual(str(config.DEFAULT_HOME), "/opt/outreach49")
+
 
 def _seed_campaign(store, settings, *, contacts: int, campaign_id: str,
                    segment: str, allow_repeat: bool = False,

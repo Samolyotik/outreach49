@@ -4,15 +4,15 @@
 
 ```bash
 # 1. Код
-mkdir -p /opt/bridge49
-# скопировать содержимое репозитория в /opt/bridge49
+mkdir -p /opt/outreach49
+# скопировать содержимое репозитория в /opt/outreach49
 
 # 2. Виртуальное окружение
-python3 -m venv /opt/bridge49/venv
-/opt/bridge49/venv/bin/pip install -r /opt/bridge49/requirements.txt
+python3 -m venv /opt/outreach49/venv
+/opt/outreach49/venv/bin/pip install -r /opt/outreach49/requirements.txt
 
 # 3. Реестр аккаунтов
-cd /opt/bridge49 && bin/bridge49 accounts --sync accounts.json
+cd /opt/outreach49 && bin/bridge49 accounts --sync accounts.json
 
 # 4. Проверка
 bin/bridge49 doctor
@@ -35,10 +35,10 @@ bridge49 не заводит и копий секрета не делает.
 ```bash
 # на машине с доступом к Radar read-only
 python scripts/snapshot_accounts.py > accounts.json
-scp accounts.json root@сервер:/opt/bridge49/accounts.json
+scp accounts.json root@сервер:/opt/outreach49/accounts.json
 
 # на сервере
-cd /opt/bridge49 && bin/bridge49 accounts --sync accounts.json
+cd /opt/outreach49 && bin/bridge49 accounts --sync accounts.json
 ```
 
 Снимок нужен для планирования (кому какое действие можно поручить), но не
@@ -112,7 +112,7 @@ ARMED он будет просто печатать предпросмотр в 
 Всё состояние — один файл:
 
 ```bash
-sqlite3 /opt/bridge49/var/bridge49.sqlite ".backup /var/backups/bridge49-$(date +%F).sqlite"
+sqlite3 /opt/outreach49/var/bridge49.sqlite ".backup /var/backups/bridge49-$(date +%F).sqlite"
 ```
 
 Восстановление — положить файл обратно. Ничего другого сохранять не нужно:
@@ -219,7 +219,7 @@ bin/bridge49 poll results
 
 ```bash
 systemctl disable --now outreach49-poll.timer outreach49-dispatch.timer
-rm -rf /opt/bridge49
+rm -rf /opt/outreach49
 ```
 
 На Radar это не влияет никак: bridge49 не владеет ничем на его стороне, кроме

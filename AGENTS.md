@@ -8,7 +8,7 @@
 ## 1. Что изменилось
 
 Рассылка снова работает. Управляющий контур пересобран заново и живёт в
-`/opt/bridge49`. Отправляют те же 49 Telegram-аккаунтов Radar через тот же
+`/opt/outreach49`. Отправляют те же 49 Telegram-аккаунтов Radar через тот же
 мост в PostgreSQL — контракт моста не менялся. Изменилась только твоя сторона:
 вместо 334 000 строк и 185 модулей теперь 4 000 строк и 13 модулей.
 
@@ -51,12 +51,12 @@ Radar остаётся владельцем сессий, прокси и все
 
 | | |
 |---|---|
-| код и запуск | `/opt/bridge49`, команда `/opt/bridge49/bin/bridge49` |
-| всё состояние | `/opt/bridge49/var/bridge49.sqlite` — один файл |
-| боевой режим | `/opt/bridge49/var/ARMED` — есть файл, значит включён |
-| лимиты | `/opt/bridge49/var/limits.json` |
+| код и запуск | `/opt/outreach49`, команда `/opt/outreach49/bin/bridge49` |
+| всё состояние | `/opt/outreach49/var/bridge49.sqlite` — один файл |
+| боевой режим | `/opt/outreach49/var/ARMED` — есть файл, значит включён |
+| лимиты | `/opt/outreach49/var/limits.json` |
 | реквизиты моста | `/var/lib/tgradar-outreach/secrets/tgr_bridge.env` — **тот же файл, что раньше** |
-| снимок 49 аккаунтов | `/opt/bridge49/accounts.json` |
+| снимок 49 аккаунтов | `/opt/outreach49/accounts.json` |
 | юниты systemd | установлены, **не включены** |
 
 Переменные окружения, если нужно отклониться от умолчаний: `BRIDGE49_HOME`,
@@ -71,7 +71,7 @@ Telegram), `docs/OPERATIONS.md` (эксплуатация и разбор про
 ## 4. Первые три команды
 
 ```bash
-cd /opt/bridge49
+cd /opt/outreach49
 bin/bridge49 doctor    # конфиг, реквизиты, связь с мостом, реестр аккаунтов
 bin/bridge49 status    # общая картина
 bin/bridge49 actions   # какие действия бывают и какие роли их могут
@@ -340,8 +340,8 @@ bin/bridge49 dispatch --unblock task_xxxxx
 
 ```bash
 # 1. освежить перенос — он идемпотентен, заберёт всё, что накопилось
-/opt/bridge49/venv/bin/python \
-    /opt/bridge49/scripts/import_from_tgradar_outreach.py --apply
+/opt/outreach49/venv/bin/python \
+    /opt/outreach49/scripts/import_from_tgradar_outreach.py --apply
 
 # 2. остановить прежний контур
 systemctl stop tgradar-outreach-logic-worker
