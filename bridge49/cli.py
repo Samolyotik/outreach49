@@ -186,9 +186,16 @@ def cmd_accounts(args) -> int:
                 candidate = settings.home / path
                 path = candidate if candidate.exists() else path
             result = accounts_mod.sync(
-                store, accounts_mod.load_snapshot(path), actor=args.actor
+                store, accounts_mod.load_snapshot(path), actor=args.actor,
+                pause_new=bool(args.pause_new),
             )
             print(report.kv(sorted(result.items())))
+            if result.get("paused_new"):
+                print(report.warn(
+                    "новые аккаунты приняты в карантине: "
+                    + ", ".join(str(i) for i in result["paused_new"])
+                    + ". Снимать паузу поимённо: accounts --resume ID"
+                ))
             return 0
         if args.pause is not None:
             accounts_mod.pause(store, args.pause, True, actor=args.actor)
@@ -752,6 +759,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("accounts", help="реестр аккаунтов")
     p.add_argument("--sync", metavar="FILE", help="влить снимок из JSON")
+    p.add_argument("--pause-new", action="store_true",
+                   help="новые аккаунты принять в карантине: в реестре есть, "
+                        "работы не получают, пауза снимается поимённо")
     p.add_argument("--role", help="фильтр по роли")
     p.add_argument("--pause", type=int, metavar="ID")
     p.add_argument("--resume", type=int, metavar="ID")

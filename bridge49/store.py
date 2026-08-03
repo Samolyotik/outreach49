@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -165,6 +165,9 @@ CREATE TABLE IF NOT EXISTS history (
   text        TEXT NOT NULL DEFAULT '',
   sent_at     TEXT,
   origin      TEXT NOT NULL DEFAULT 'import',
+  -- id сообщения в Telegram по данным исходной системы. Нужен, чтобы позже
+  -- разложить эту историю в responder-домен Radar, не выводя связи заново.
+  source_ref  TEXT,
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_history_thread ON history(thread_id, sent_at);
@@ -223,8 +226,24 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA busy_timeout=30000")
         self.conn.executescript(SCHEMA)
+        self._ensure_columns()
         self.set_state("schema_version", str(SCHEMA_VERSION))
         self.conn.commit()
+
+    #: Колонки, добавленные после первой версии схемы. `CREATE TABLE IF NOT
+    #: EXISTS` их в уже существующую базу не принесёт, поэтому доливаем руками.
+    LATE_COLUMNS = (("history", "source_ref", "TEXT"),)
+
+    def _ensure_columns(self) -> None:
+        for table, column, kind in self.LATE_COLUMNS:
+            have = {
+                row["name"]
+                for row in self.conn.execute(f"PRAGMA table_info({table})")
+            }
+            if column not in have:
+                self.conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {column} {kind}"
+                )
 
     # -- базовые операции ---------------------------------------------------
 

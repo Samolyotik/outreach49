@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import random
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -19,6 +21,18 @@ from bridge49 import accounts as accounts_mod  # noqa: E402
 from bridge49 import catalog, config, dispatcher, entities, planner, pollers, radar  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store  # noqa: E402
+
+
+def _load_script(name: str):
+    """Скрипты лежат вне пакета — подгружаем по пути."""
+    path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+legacy_import = _load_script("import_from_tgradar_outreach")
 
 SNAPSHOT = [
     {
@@ -876,6 +890,200 @@ class AccountRegistryTests(unittest.TestCase):
         first = accounts_mod.sync(self.store, SNAPSHOT)
         self.assertEqual(first["added"], 0)
         self.assertEqual(first["updated"], 2)
+
+
+class AccountIntakeTests(unittest.TestCase):
+    """Приём чужих аккаунтов: приезжают в карантине, работать не начинают."""
+
+    NEWCOMER = {
+        "id": 861, "label": "moved-one", "program_code": "TGR1",
+        "runtime_state": "running",
+        "outreach": {
+            "enabled": True, "roles": ["dm_sender"], "publish_inbound": True,
+            "allow_immediate_visible_actions": True,
+            "allowed_actions": ["send_private_dm", "reply_private_dm", "get_me"],
+        },
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_new_accounts_arrive_paused(self):
+        result = accounts_mod.sync(
+            self.store, SNAPSHOT + [self.NEWCOMER], pause_new=True
+        )
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["paused_new"], [861])
+        self.assertTrue(accounts_mod.get(self.store, 861)["paused"])
+
+    def test_quarantined_account_gets_no_work(self):
+        accounts_mod.sync(self.store, SNAPSHOT + [self.NEWCOMER], pause_new=True)
+        ok, why = accounts_mod.usable(
+            accounts_mod.get(self.store, 861), "send_private_dm"
+        )
+        self.assertFalse(ok)
+        self.assertIn("паузе", why)
+        self.assertEqual(
+            [a["id"] for a in
+             accounts_mod.candidates(self.store, "send_private_dm")],
+            [821],
+        )
+
+    def test_already_working_accounts_are_not_touched(self):
+        accounts_mod.sync(self.store, SNAPSHOT)
+        result = accounts_mod.sync(
+            self.store, SNAPSHOT + [self.NEWCOMER], pause_new=True
+        )
+        # Пауза касается только новичка: 821 работал и продолжает работать.
+        self.assertEqual(result["paused_new"], [861])
+        self.assertFalse(accounts_mod.get(self.store, 821)["paused"])
+
+    def test_pause_survives_a_repeated_sync(self):
+        accounts_mod.sync(self.store, SNAPSHOT + [self.NEWCOMER], pause_new=True)
+        accounts_mod.sync(self.store, SNAPSHOT + [self.NEWCOMER])
+        self.assertTrue(
+            accounts_mod.get(self.store, 861)["paused"],
+            "повторный sync снял карантин — так нельзя",
+        )
+
+
+class LegacyImportTests(unittest.TestCase):
+    """Импорт истории: по аккаунтам и без очереди работы."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        self.src_path = Path(self.tmp.name) / "src.sqlite"
+        self._build_source()
+        self.src = sqlite3.connect(self.src_path)
+        self.src.row_factory = sqlite3.Row
+
+    def tearDown(self):
+        self.src.close()
+        self.store.close()
+        self.tmp.cleanup()
+
+    def _build_source(self):
+        conn = sqlite3.connect(self.src_path)
+        conn.executescript(
+            """
+            CREATE TABLE recipients (
+              id TEXT PRIMARY KEY, telegram_username TEXT,
+              telegram_channel_username TEXT, telegram_user_id TEXT,
+              channel_chat_id TEXT, name TEXT, company TEXT, segment TEXT,
+              notes TEXT, opt_out_status INTEGER DEFAULT 0,
+              last_contacted_at TEXT, last_replied_at TEXT, created_at TEXT
+            );
+            CREATE TABLE opt_outs (recipient_id TEXT);
+            CREATE TABLE conversations (
+              id TEXT PRIMARY KEY, recipient_id TEXT, sender_account_id TEXT,
+              campaign_id TEXT, state TEXT, last_message_at TEXT,
+              last_inbound_at TEXT, last_outbound_at TEXT,
+              handoff_status TEXT DEFAULT 'none', manager_owner TEXT,
+              summary TEXT, created_at TEXT
+            );
+            CREATE TABLE messages (
+              id TEXT PRIMARY KEY, conversation_id TEXT, direction TEXT,
+              sender_type TEXT, telegram_message_id TEXT, text TEXT,
+              sent_at TEXT, created_at TEXT
+            );
+            CREATE TABLE handoff_tasks (
+              id TEXT PRIMARY KEY, conversation_id TEXT, status TEXT,
+              reason TEXT, manager_owner TEXT, summary TEXT, created_at TEXT
+            );
+            """
+        )
+        # Один человек, с которым говорили ДВА разных аккаунта.
+        conn.execute(
+            "INSERT INTO recipients(id, telegram_username, name, segment, "
+            "created_at) VALUES('r1', 'lead_moved', 'Иван', 'seg', ?)",
+            ("2026-07-01T10:00:00+00:00",),
+        )
+        for cid, sender in (("cv1", "dm_sender_002"), ("cv2", "channel_sender_001")):
+            conn.execute(
+                "INSERT INTO conversations(id, recipient_id, sender_account_id, "
+                "campaign_id, state, last_message_at, handoff_status, created_at) "
+                "VALUES(?,?,?,NULL,'Replied',?, 'pending', ?)",
+                (cid, "r1", sender, "2026-07-20T10:00:00+00:00",
+                 "2026-07-01T10:00:00+00:00"),
+            )
+        conn.execute(
+            "INSERT INTO messages(id, conversation_id, direction, sender_type, "
+            "telegram_message_id, text, sent_at, created_at) "
+            "VALUES('m1','cv1','inbound','recipient','7788','привет',?,?)",
+            ("2026-07-20T10:00:00+00:00", "2026-07-20T10:00:00+00:00"),
+        )
+        conn.execute(
+            "INSERT INTO handoff_tasks(id, conversation_id, status, reason, "
+            "created_at) VALUES('ht1','cv1','new','ответил', ?)",
+            ("2026-07-20T10:01:00+00:00",),
+        )
+        conn.commit()
+        conn.close()
+
+    def _run(self, **kwargs):
+        contacts = legacy_import.import_contacts(self.src, self.store)
+        threads = legacy_import.import_threads(
+            self.src, self.store, contacts["mapping"], {}, **kwargs
+        )
+        history = legacy_import.import_history(
+            self.src, self.store, threads["mapping"]
+        )
+        handoffs = legacy_import.import_handoffs(
+            self.src, self.store, threads["mapping"],
+            archive=kwargs.get("archive", False),
+        )
+        return threads, history, handoffs
+
+    def test_dialogs_land_on_their_own_accounts(self):
+        self._run(accounts={"dm_sender_002": 861, "channel_sender_001": 862})
+        owners = {
+            int(row["account_id"])
+            for row in self.store.query("SELECT account_id FROM threads")
+        }
+        self.assertEqual(owners, {861, 862})
+
+    def test_two_accounts_talking_to_one_person_are_not_merged(self):
+        threads, _, _ = self._run(
+            accounts={"dm_sender_002": 861, "channel_sender_001": 862}
+        )
+        # У человека один, но переписки две — их вели разные аккаунты.
+        self.assertEqual(threads["imported"], 2)
+        self.assertEqual(threads["merged_conversations"], 0)
+
+    def test_unmapped_sender_is_reported_not_hidden(self):
+        threads, _, _ = self._run(accounts={"dm_sender_002": 861})
+        self.assertEqual(threads["unmapped_senders"], {"channel_sender_001": 1})
+
+    def test_archive_leaves_no_work_queue(self):
+        self._run(accounts={"dm_sender_002": 861}, archive=True)
+        pending = self.store.one(
+            "SELECT count(*) AS n FROM handoffs WHERE status IN ('new','taken')"
+        )["n"]
+        self.assertEqual(pending, 0, "архив создал очередь менеджеру")
+        states = {
+            row["state"]
+            for row in self.store.query("SELECT DISTINCT state FROM threads")
+        }
+        self.assertEqual(states, {"closed"})
+
+    def test_without_archive_the_queue_appears(self):
+        # Обратная проверка: флаг действительно что-то меняет.
+        self._run(accounts={"dm_sender_002": 861})
+        pending = self.store.one(
+            "SELECT count(*) AS n FROM handoffs WHERE status IN ('new','taken')"
+        )["n"]
+        self.assertEqual(pending, 1)
+
+    def test_telegram_message_id_survives_for_a_later_radar_backfill(self):
+        self._run(accounts={"dm_sender_002": 861}, archive=True)
+        row = self.store.one("SELECT source_ref FROM history WHERE id = 'h_imp_m1'")
+        self.assertEqual(row["source_ref"], "7788")
 
 
 class PaceFloorTests(unittest.TestCase):

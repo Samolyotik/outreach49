@@ -27,10 +27,21 @@ def load_snapshot(path: Path | str) -> list[dict]:
     return data
 
 
-def sync(store: Store, rows: Iterable[dict], *, actor: str = "cli") -> dict:
-    """Влить снимок в локальный реестр. Локальную паузу и заметку не трогаем."""
+def sync(
+    store: Store, rows: Iterable[dict], *, actor: str = "cli",
+    pause_new: bool = False,
+) -> dict:
+    """Влить снимок в локальный реестр. Локальную паузу и заметку не трогаем.
+
+    ``pause_new`` ставит на паузу только что появившиеся аккаунты — уже
+    работающих это не касается. Так принимают чужие аккаунты: они приезжают в
+    реестр, видны в отчётах, но ни одна задача им не достанется, пока паузу не
+    снимут поимённо. Карантин обязан быть свойством самого приёма, иначе он
+    превращается в шаг, который забывают сделать.
+    """
     seen: set[int] = set()
     added = updated = skipped = 0
+    fresh: list[int] = []
 
     for raw in rows:
         outreach = raw.get("outreach") or raw.get("RESPONDER_OUTREACH") or {}
@@ -75,6 +86,16 @@ def sync(store: Store, rows: Iterable[dict], *, actor: str = "cli") -> dict:
                 fields,
             )
             added += 1
+            fresh.append(account_id)
+
+    if pause_new and fresh:
+        store.execute(
+            "UPDATE accounts SET paused = 1 WHERE id IN "
+            f"({','.join('?' * len(fresh))})",
+            fresh,
+        )
+        store.log(actor, "accounts.quarantine", "",
+                  f"paused_new={','.join(str(i) for i in fresh)}")
 
     stale = [
         int(row["id"])
@@ -92,6 +113,7 @@ def sync(store: Store, rows: Iterable[dict], *, actor: str = "cli") -> dict:
         "skipped": skipped,
         "stale": stale,
         "total": len(seen),
+        "paused_new": fresh if pause_new else [],
     }
 
 

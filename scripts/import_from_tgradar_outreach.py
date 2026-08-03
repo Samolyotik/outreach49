@@ -21,7 +21,21 @@
 
     python3 scripts/import_from_tgradar_outreach.py \
         --source /var/lib/tgradar-outreach/production/runtime/outreach.sqlite \
-        --target /opt/bridge49/var/bridge49.sqlite --apply
+        --target /opt/outreach49/var/outreach49.sqlite --apply
+
+При переезде чужих аккаунтов к нам добавляются два флага:
+
+    --accounts map.json   {"dm_sender_002": 861, "channel_sender_001": 862}
+    --archive             история приезжает архивом, а не очередью работы
+
+``--accounts`` раскладывает диалоги по нашим аккаунтам через
+``conversations.sender_account_id``. Без карты всё падает в ``LEGACY_ACCOUNT``
+одной кучей — для переезда так нельзя, история должна приехать привязанной.
+
+``--archive`` — про то, чтобы никто не начал работать сам. Импортированные
+диалоги закрываются, задачи менеджера приезжают закрытыми. Иначе триста старых
+переписок выглядят как триста «нужно ответить», и первый же агент примет
+полугодовую давность за сегодняшнюю очередь.
 """
 from __future__ import annotations
 
@@ -241,6 +255,7 @@ _STATE_MAP = {
 def import_threads(
     src: sqlite3.Connection, store: Store,
     contacts: dict[str, str], campaigns: dict[str, str],
+    *, accounts: dict[str, int] | None = None, archive: bool = False,
 ) -> dict:
     """Схлопнуть его conversations в наши threads.
 
@@ -249,7 +264,13 @@ def import_threads(
     же человека становятся ОДНИМ нашим диалогом: у человека он и был один.
     Состояние берём от самой свежей переписки, а карту conversation → thread
     возвращаем целиком, чтобы сообщения и задачи менеджера легли по местам.
+
+    С картой ``accounts`` диалог достаётся тому аккаунту, который его и вёл
+    (``conversations.sender_account_id``). Схлопывание тогда идёт по паре
+    «аккаунт × человек», а не по одному человеку: если с ним говорили два
+    разных аккаунта, это две разные переписки, и сливать их нельзя.
     """
+    accounts = accounts or {}
     rows = src.execute(
         "SELECT * FROM conversations ORDER BY COALESCE(last_message_at, created_at)"
     ).fetchall()
@@ -257,6 +278,7 @@ def import_threads(
     merged = 0
     skipped = 0
     seen: set[str] = set()
+    unmapped: dict[str, int] = {}
 
     for row in rows:
         contact_id = contacts.get(row["recipient_id"])
@@ -264,7 +286,12 @@ def import_threads(
             skipped += 1
             continue
 
-        thread_id = f"th_imp_{row['recipient_id']}"
+        sender = str(row["sender_account_id"] or "")
+        account_id = accounts.get(sender, LEGACY_ACCOUNT)
+        if account_id == LEGACY_ACCOUNT:
+            unmapped[sender or "(нет)"] = unmapped.get(sender or "(нет)", 0) + 1
+
+        thread_id = f"th_imp_{account_id}_{row['recipient_id']}"
         mapping[row["id"]] = thread_id
         if thread_id in seen:
             merged += 1
@@ -280,6 +307,10 @@ def import_threads(
         state = _STATE_MAP.get(str(row["state"]), "open")
         if str(row["handoff_status"]) in ("pending", "taken"):
             state = "handoff"
+        if archive:
+            # Архив не должен выглядеть как работа: открытых и ждущих
+            # человека диалогов после импорта не остаётся вовсе.
+            state = "closed"
 
         # Строки идут по возрастанию времени, поэтому последняя запись того же
         # человека и задаёт итоговое состояние.
@@ -296,7 +327,7 @@ def import_threads(
             "owner=COALESCE(excluded.owner, threads.owner), "
             "summary=COALESCE(excluded.summary, threads.summary), "
             "updated_at=excluded.updated_at",
-            (thread_id, LEGACY_ACCOUNT, peer_key, contact_id,
+            (thread_id, account_id, peer_key, contact_id,
              campaigns.get(row["campaign_id"]), "private_dm", state,
              row["last_outbound_at"], row["last_inbound_at"],
              row["manager_owner"], row["summary"],
@@ -306,7 +337,8 @@ def import_threads(
 
     store.commit()
     return {"imported": len(seen), "merged_conversations": merged,
-            "skipped_without_contact": skipped, "mapping": mapping}
+            "skipped_without_contact": skipped, "mapping": mapping,
+            "unmapped_senders": unmapped}
 
 
 def import_history(
@@ -323,12 +355,16 @@ def import_history(
             continue
         store.execute(
             "INSERT INTO history(id, thread_id, direction, author, text, sent_at, "
-            "origin, created_at) VALUES(?,?,?,?,?,?,'import',?) "
+            "origin, source_ref, created_at) VALUES(?,?,?,?,?,?,'import',?,?) "
             "ON CONFLICT(id) DO UPDATE SET text=excluded.text, "
-            "sent_at=excluded.sent_at",
+            "sent_at=excluded.sent_at, source_ref=excluded.source_ref",
             (f"h_imp_{row['id']}", thread_id, row["direction"],
              row["sender_type"], row["text"] or "",
-             row["sent_at"] or row["created_at"], row["created_at"] or now()),
+             row["sent_at"] or row["created_at"],
+             # id сообщения в Telegram: пригодится, если историю решат разложить
+             # в responder-домен Radar.
+             row["telegram_message_id"],
+             row["created_at"] or now()),
         )
         count += 1
     store.commit()
@@ -336,7 +372,8 @@ def import_history(
 
 
 def import_handoffs(
-    src: sqlite3.Connection, store: Store, threads: dict[str, str]
+    src: sqlite3.Connection, store: Store, threads: dict[str, str],
+    *, archive: bool = False,
 ) -> dict:
     """Перенести задачи менеджера.
 
@@ -358,6 +395,10 @@ def import_handoffs(
             continue
 
         status = {"new": "new", "taken": "taken"}.get(str(row["status"]), "closed")
+        if archive:
+            # Записи сохраняем — они часть истории, — но ни одна из них не
+            # попадает в очередь менеджера.
+            status = "closed"
         if status in ("new", "taken"):
             if thread_id in active_taken:
                 status = "closed"
@@ -389,15 +430,38 @@ def main() -> int:
         "--source",
         default="/var/lib/tgradar-outreach/production/runtime/outreach.sqlite",
     )
-    parser.add_argument("--target", default="/opt/bridge49/var/bridge49.sqlite")
+    parser.add_argument("--target", default="/opt/outreach49/var/outreach49.sqlite")
     parser.add_argument("--apply", action="store_true",
                         help="без этого флага только показать, что будет перенесено")
+    parser.add_argument(
+        "--accounts", metavar="MAP.JSON",
+        help="карта «его гейтвей → наш Account.id», "
+             'например {"dm_sender_002": 861}',
+    )
+    parser.add_argument(
+        "--archive", action="store_true",
+        help="история приезжает архивом: диалоги закрыты, "
+             "задачи менеджера закрыты, очередь работы не появляется",
+    )
     args = parser.parse_args()
 
     source = Path(args.source)
     if not source.exists():
         print(f"нет исходной базы: {source}")
         return 1
+
+    account_map: dict[str, int] = {}
+    if args.accounts:
+        account_map = {
+            str(key): int(value)
+            for key, value in json.loads(
+                Path(args.accounts).read_text(encoding="utf-8")
+            ).items()
+        }
+        print(f"карта аккаунтов: {len(account_map)} гейтвеев")
+    else:
+        print("⚠️  карта аккаунтов не задана — все диалоги лягут на "
+              f"LEGACY_ACCOUNT={LEGACY_ACCOUNT} одной кучей")
 
     src = _open_readonly(source)
     try:
@@ -428,18 +492,31 @@ def main() -> int:
             print(f"  кампании:  {campaigns['imported']} (все в статусе draft)")
 
             threads = import_threads(
-                src, store, contacts["mapping"], campaigns["mapping"]
+                src, store, contacts["mapping"], campaigns["mapping"],
+                accounts=account_map, archive=args.archive,
             )
             print(f"  диалоги:   {threads['imported']} "
                   f"(схлопнуто переписок: {threads['merged_conversations']}, "
                   f"без контакта пропущено: {threads['skipped_without_contact']})")
+            for sender, count in sorted(
+                threads["unmapped_senders"].items(), key=lambda kv: -kv[1]
+            ):
+                print(f"    ⚠️  {sender}: {count} диалогов без нашего аккаунта")
 
             history = import_history(src, store, threads["mapping"])
             print(f"  переписка: {history['imported']} сообщений")
 
-            handoffs = import_handoffs(src, store, threads["mapping"])
+            handoffs = import_handoffs(
+                src, store, threads["mapping"], archive=args.archive
+            )
             print(f"  менеджеру: {handoffs['imported']} задач "
-                  f"(дублей закрыто: {handoffs['closed_as_duplicate']})")
+                  f"(дублей закрыто: {handoffs['closed_as_duplicate']})"
+                  + (", все закрыты архивом" if args.archive else ""))
+
+            if account_map:
+                # Карта нужна не только сейчас: без неё будущий бэкфилл в
+                # responder-домен Radar пришлось бы выводить заново.
+                store.set_state("import_account_map", dumps(account_map))
 
             store.log("import", "import.tgradar_outreach", str(source),
                       f"contacts={contacts['added']}+{contacts['updated']} "
@@ -447,11 +524,15 @@ def main() -> int:
                       f"campaigns={campaigns['imported']} "
                       f"threads={threads['imported']} "
                       f"history={history['imported']} "
-                      f"handoffs={handoffs['imported']}")
+                      f"handoffs={handoffs['imported']} "
+                      f"archive={int(bool(args.archive))}")
             store.commit()
 
         print("\nГотово. Все перенесённые кампании в статусе draft — "
               "запускать их нужно осознанно.")
+        if args.archive:
+            print("Импорт архивный: открытых диалогов и задач менеджера "
+                  "он не создал.")
         return 0
     finally:
         src.close()
