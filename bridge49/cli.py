@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import alerts, catalog, config, dispatcher, entities, planner, pollers, report, watchdog
+from . import (alerts, catalog, config, dispatcher, entities, planner, pollers,
+               replies, report, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -598,6 +599,34 @@ def cmd_watchdog(args) -> int:
     return 1 if result.worst in (watchdog.CRITICAL, watchdog.HIGH) else 0
 
 
+def cmd_reply(args) -> int:
+    """Поставить ответ в диалог. Отправит его всё равно только dispatch."""
+    settings = _settings(args)
+    with _store(settings) as store:
+        try:
+            result = replies.queue_reply(
+                store,
+                text=args.text,
+                thread_id=args.thread,
+                account_id=args.account,
+                peer=args.peer,
+                mode=args.mode,
+                actor=args.actor,
+            )
+        except replies.ReplyError as exc:
+            print(report.bad(str(exc)))
+            return 1
+    print(report.kv(sorted(result.items())))
+    if not settings.armed:
+        print(report.warn(
+            "боевой режим выключен — ответ поставлен в очередь, но не уйдёт. "
+            "Включить: bridge49 arm on"
+        ))
+    else:
+        print("отправит ближайший dispatch")
+    return 0
+
+
 def cmd_threads(args) -> int:
     settings = _settings(args)
     with _store(settings) as store:
@@ -906,6 +935,14 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=("all", "results", "inbound"))
     p.add_argument("--limit", type=int, default=500)
     p.set_defaults(func=cmd_poll)
+
+    p = sub.add_parser("reply", help="ответить в диалог")
+    p.add_argument("--thread", help="id диалога (см. threads)")
+    p.add_argument("--account", type=int, help="или пара: аккаунт …")
+    p.add_argument("--peer", help="… и собеседник (@username или id:123)")
+    p.add_argument("--text", required=True, help="текст ответа")
+    p.add_argument("--mode", default="lottery", choices=("lottery", "immediate"))
+    p.set_defaults(func=cmd_reply)
 
     p = sub.add_parser("threads", help="диалоги")
     p.add_argument("--state")

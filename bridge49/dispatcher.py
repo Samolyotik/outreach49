@@ -28,7 +28,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import accounts as accounts_mod
-from . import catalog, report
+from . import catalog, replies, report
 from .config import Settings
 from .radar import (
     BridgeError,
@@ -334,7 +334,10 @@ def preflight(
         # Уникальность в tasks держит только пару (кампания, контакт), поэтому
         # второй сегмент, пересекающийся с первым, без этой проверки написал бы
         # тем же людям повторно и, скорее всего, с другого аккаунта.
-        if not campaign_allows_repeat(task):
+        #
+        # Ответ под эту защиту не подпадает: она про первое касание, а человек,
+        # которому мы отвечаем, написал нам сам и ждёт.
+        if action.name not in replies.REPLY_ACTIONS and not campaign_allows_repeat(task):
             contact_id = str(task["contact_id"])
             touch = contact_touch(store, contact_id)
             if touch is None and touched is not None and contact_id in touched:

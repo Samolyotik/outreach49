@@ -18,9 +18,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import alerts, catalog, config, dispatcher, entities, planner, pollers, radar, watchdog  # noqa: E402
+from bridge49 import (alerts, catalog, config, dispatcher, entities, planner,  # noqa: E402
+                      pollers, radar, replies, watchdog)
 from bridge49.config import Limits, Settings  # noqa: E402
-from bridge49.store import Store  # noqa: E402
+from bridge49.store import Store, now  # noqa: E402
 
 
 def _load_script(name: str):
@@ -1732,6 +1733,101 @@ class AlertDeliveryTests(unittest.TestCase):
         result = self._run()
         self.assertFalse(result.ok)
         self.assertEqual(self.sent, [])
+
+
+class ReplyTests(unittest.TestCase):
+    """Ответ адресуется входящему, а не username, и слушается тех же ворот."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        limits = self.settings.limits
+        limits.per_account_visible_interval_sec = 0
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, surface, state, "
+            "created_at, updated_at) "
+            "VALUES('th1', 821, '@lead', 'private_dm', 'handoff', ?, ?)",
+            (now(), now()),
+        )
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, peer_username, "
+            "peer_tg_id, text, sent_at, raw, created_at) "
+            "VALUES(9001, 821, 'private_dm', '@lead', 'lead', 777, 'Здравствуйте!', "
+            "?, '{}', ?)",
+            (now(), now()),
+        )
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_reply_targets_the_inbound_notification(self):
+        result = replies.queue_reply(
+            self.store, text="Расскажу подробнее", thread_id="th1"
+        )
+        task = self.store.one(
+            "SELECT action, params, account_id FROM tasks WHERE id = ?",
+            (result["task"],),
+        )
+        self.assertEqual(task["action"], "reply_private_dm")
+        self.assertEqual(int(task["account_id"]), 821)
+        params = json.loads(task["params"])
+        # Адресат берётся из входящего: username — алиас, он меняется.
+        self.assertEqual(params["inbound_notification_id"], 9001)
+        self.assertEqual(params["text"], "Расскажу подробнее")
+
+    def test_contact_is_created_for_a_stranger(self):
+        replies.queue_reply(self.store, text="Привет", account_id=821, peer="lead")
+        thread = self.store.one("SELECT contact_id FROM threads WHERE id = 'th1'")
+        self.assertIsNotNone(thread["contact_id"])
+        contact = self.store.one(
+            "SELECT username, segment FROM contacts WHERE id = ?",
+            (thread["contact_id"],),
+        )
+        self.assertEqual(contact["username"], "lead")
+        self.assertEqual(contact["segment"], "inbound")
+
+    def test_second_reply_while_the_first_waits_is_refused(self):
+        replies.queue_reply(self.store, text="раз", thread_id="th1")
+        with self.assertRaises(replies.ReplyError):
+            replies.queue_reply(self.store, text="два", thread_id="th1")
+
+    def test_thread_without_inbound_cannot_be_answered(self):
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, surface, created_at, "
+            "updated_at) VALUES('th2', 821, '@silent', 'private_dm', ?, ?)",
+            (now(), now()),
+        )
+        self.store.commit()
+        with self.assertRaises(replies.ReplyError):
+            replies.queue_reply(self.store, text="ау", thread_id="th2")
+
+    def test_reply_is_not_blocked_by_the_touch_guard(self):
+        # Человеку уже писали — для первого касания это стоп, для ответа нет.
+        replies.queue_reply(self.store, text="ответ", thread_id="th1")
+        contact = self.store.one("SELECT contact_id FROM threads WHERE id='th1'")
+        self.store.execute(
+            "INSERT INTO contact_touches(contact_id, first_sent_at, last_sent_at, "
+            "sent_count) VALUES(?,?,?,1)",
+            (contact["contact_id"], now(), now()),
+        )
+        self.store.commit()
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 1, result)
+
+    def test_reply_still_obeys_the_send_window(self):
+        self.settings.limits.send_weekdays = ()
+        replies.queue_reply(self.store, text="ответ", thread_id="th1")
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 0)
+        self.assertEqual(bridge.calls, [])
 
 
 if __name__ == "__main__":
