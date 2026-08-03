@@ -1773,6 +1773,13 @@ class SendTests(unittest.TestCase):
         self.assertEqual(json.loads(task["params"])["text"], "персональная ссылка")
 
     def test_channel_send_keeps_both_route_ids(self):
+        """Оба маршрута сохраняются — и с них снимается разметка Telethon.
+
+        Раньше значения уходили в Radar как есть, со знаком, и команда
+        отклонялась: «target_channel_tg_id must be a positive 64-bit integer».
+        Сама разметка проверяется в PeerIdTests, здесь важно, что через
+        постановку задачи она тоже снимается.
+        """
         result = replies.queue_send(
             self.store, account_id=821, text="ссылка", username="autoimport27",
             kind="channel_dm", channel_tg_id=-1001763001372,
@@ -1781,8 +1788,8 @@ class SendTests(unittest.TestCase):
         params = json.loads(self.store.one(
             "SELECT params FROM tasks WHERE id = ?", (result["task"],)
         )["params"])
-        self.assertEqual(params["target_channel_tg_id"], -1001763001372)
-        self.assertEqual(params["target_monoforum_tg_id"], -2071763001372)
+        self.assertEqual(params["target_channel_tg_id"], 1763001372)
+        self.assertEqual(params["target_monoforum_tg_id"], 1071763001372)
 
     def test_repeat_does_not_queue_a_second_message(self):
         replies.queue_send(self.store, account_id=821, text="раз", username="lead")

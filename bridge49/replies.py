@@ -155,6 +155,52 @@ def ensure_send_campaign(store: Store, action: str) -> str:
     return campaign_id
 
 
+#: Размеченные идентификаторы Telegram, которые нам встречаются: канал идёт с
+#: префиксом «-100», его monoforum — с «-207».
+MARKED_PEER_PREFIXES = ("-100", "-207")
+MARKED_PEER_OFFSET = 10 ** 12
+
+
+def peer_id(value: Any, field: str) -> int:
+    """Привести идентификатор канала к тому виду, которого ждёт Radar.
+
+    Radar передаёт значение прямо в ``PeerChannel`` и потому требует голый
+    положительный id. Telethon отдаёт размеченный, со знаком, и отправить
+    такой напрямую нельзя: команда отклоняется с «must be a positive 64-bit
+    integer». Именно это и случилось 03.08 на выдаче ссылок.
+
+    Разметка снимается вычитанием триллиона, и это работает для обоих
+    префиксов сразу::
+
+        канал     -1001763001372 → 1763001372
+        monoforum -2071763001372 → 1071763001372
+
+    Связь между парой видна и в живых данных: monoforum — это тот же канал
+    плюс 1 070 000 000 000. Отрезать префикс как строку заманчиво, но неверно:
+    на monoforum это дало бы 1763001372 вместо 1071763001372, то есть номер
+    самого канала вместо номера его monoforum.
+
+    Отрицательное значение с чужим префиксом — не канал, а обычная группа.
+    Молча превращать одно в другое нельзя, поэтому отказываемся вслух.
+    """
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ReplyError(f"{field}: не число ({value!r})") from exc
+    if number > 0:
+        return number
+    if not str(number).startswith(MARKED_PEER_PREFIXES):
+        raise ReplyError(
+            f"{field}: {number} не похож на канал — размеченный id канала "
+            f"начинается с {' или '.join(MARKED_PEER_PREFIXES)}, "
+            "а это, скорее всего, обычная группа"
+        )
+    normalized = -number - MARKED_PEER_OFFSET
+    if normalized <= 0:
+        raise ReplyError(f"{field}: после снятия разметки вышло {normalized}")
+    return normalized
+
+
 def queue_send(
     store: Store,
     *,
@@ -221,9 +267,11 @@ def queue_send(
         params["target_user_tg_id"] = int(tg_id)
     if kind == "channel_dm":
         if channel_tg_id:
-            params["target_channel_tg_id"] = int(channel_tg_id)
+            params["target_channel_tg_id"] = peer_id(
+                channel_tg_id, "target_channel_tg_id")
         if monoforum_tg_id:
-            params["target_monoforum_tg_id"] = int(monoforum_tg_id)
+            params["target_monoforum_tg_id"] = peer_id(
+                monoforum_tg_id, "target_monoforum_tg_id")
 
     task_id = new_id("task")
     store.execute(

@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import config, dispatcher, entities  # noqa: E402
+from bridge49 import config, dispatcher, entities, replies  # noqa: E402
 from bridge49.config import Limits, Settings  # noqa: E402
 from bridge49.store import Store, new_id, now  # noqa: E402
 
@@ -167,6 +167,46 @@ class CadenceTests(unittest.TestCase):
             settings, night, cadence=dispatcher.CADENCE_REPLY))
         self.assertFalse(dispatcher.inside_send_window(
             settings, night, cadence=dispatcher.CADENCE_OUTREACH))
+
+class PeerIdTests(unittest.TestCase):
+    """Разметка id канала.
+
+    Radar передаёт значение прямо в PeerChannel и требует голый положительный
+    id. Telethon отдаёт размеченный, со знаком — 03.08 такой ушёл как есть и
+    команда была отклонена.
+    """
+
+    def test_bare_id_passes_through(self):
+        self.assertEqual(replies.peer_id(1763001372, "target_channel_tg_id"),
+                         1763001372)
+
+    def test_marked_channel_is_unwrapped(self):
+        self.assertEqual(replies.peer_id(-1001763001372, "target_channel_tg_id"),
+                         1763001372)
+
+    def test_marked_monoforum_is_unwrapped(self):
+        """У monoforum свой префикс -207, и снимается он тем же вычитанием."""
+        self.assertEqual(
+            replies.peer_id(-2071763001372, "target_monoforum_tg_id"),
+            1071763001372,
+        )
+
+    def test_the_pair_keeps_its_relation(self):
+        """Живая связь из наших данных: monoforum = канал + 1 070 000 000 000."""
+        channel = replies.peer_id(-1001763001372, "target_channel_tg_id")
+        monoforum = replies.peer_id(-2071763001372, "target_monoforum_tg_id")
+
+        self.assertEqual(monoforum - channel, 1_070_000_000_000)
+
+    def test_a_plain_group_is_refused_loudly(self):
+        """Группа — не канал; молча превращать одно в другое нельзя."""
+        with self.assertRaises(replies.ReplyError) as caught:
+            replies.peer_id(-4123456789, "target_channel_tg_id")
+        self.assertIn("обычная группа", str(caught.exception))
+
+    def test_nonsense_is_refused(self):
+        with self.assertRaises(replies.ReplyError):
+            replies.peer_id("не число", "target_channel_tg_id")
 
 
 if __name__ == "__main__":
