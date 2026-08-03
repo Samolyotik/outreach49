@@ -102,12 +102,27 @@ def _verdict(action: str, state: str, result: dict, error: str | None) -> str:
     return "пусто" if not error else "отказ"
 
 
+def _payload(result: dict) -> dict:
+    """Достать возврат самого действия из конверта Radar.
+
+    Мост кладёт результат в `details.result`, а тот — конверт: `outcome`,
+    `error`, `completed_at`, корреляционные id и `data`, внутри которого и
+    лежит то, что вернуло действие. Разбор верхнего уровня давал «пусто» на
+    живом ответе — поймано первой же настоящей проверкой 03.08.2026.
+
+    Голый ответ без конверта тоже принимаем: так его отдаёт сам примитив
+    Radar, и на нём написаны тесты по ту сторону моста.
+    """
+    data = result.get("data")
+    return data if isinstance(data, dict) else result
+
+
 def row(task: dict) -> dict:
     """Свести одну задачу-чтение к плоской строке."""
     result = task.get("result")
     if isinstance(result, str):
         result = loads(result, {})
-    result = result if isinstance(result, dict) else {}
+    result = _payload(result if isinstance(result, dict) else {})
     chat = result.get("chat")
     chat = chat if isinstance(chat, dict) else {}
 

@@ -354,6 +354,23 @@ class ReadCadenceTests(unittest.TestCase):
             self.assertGreaterEqual((later - earlier).total_seconds(), 40)
 
 
+def envelope(payload: dict) -> dict:
+    """Обернуть возврат действия так, как его кладёт мост.
+
+    Форма снята с живого ответа 03.08.2026: результат действия лежит не на
+    верхнем уровне, а в `data`. Первая же настоящая проверка показала «пусто»
+    там, где был разобранный чат, — тесты писались на выдуманной плоской
+    форме и потому молчали.
+    """
+    return {
+        "completed_at": "2026-08-03T20:40:01.826340+00:00",
+        "data": payload,
+        "error": None,
+        "external_job_id": "recon_chats",
+        "outcome": "succeeded",
+    }
+
+
 class ResultTableTests(unittest.TestCase):
     """Три формы ответа сводятся к одной строке."""
 
@@ -361,11 +378,11 @@ class ResultTableTests(unittest.TestCase):
         line = research.row({
             "action": "check_channel_dm_metadata", "state": "done",
             "target": "somechannel",
-            "result": {
+            "result": envelope({
                 "availability": "available", "public_username": "somechannel",
                 "channel_tg_id": 1763001372, "monoforum_tg_id": 2833001372,
                 "paid_message_stars": 0,
-            },
+            }),
         })
 
         self.assertEqual(line["verdict"], "есть личка")
@@ -375,14 +392,14 @@ class ResultTableTests(unittest.TestCase):
     def test_public_chat_metadata(self):
         line = research.row({
             "action": "check_public_chat_metadata", "state": "done",
-            "result": {
+            "result": envelope({
                 "decision": "restricted", "structurally_writable": False,
                 "chat": {
                     "type": "Channel", "tg_id": 42, "username": "closedchat",
                     "title": "Закрытый", "megagroup": True,
                     "participants_count": 1200,
                 },
-            },
+            }),
         })
 
         self.assertEqual(line["verdict"], "закрыт")
@@ -393,8 +410,9 @@ class ResultTableTests(unittest.TestCase):
     def test_plain_lookup(self):
         line = research.row({
             "action": "get_supergroup", "state": "done",
-            "result": {"chat": {"type": "Channel", "tg_id": 7,
-                                "title": "Вещание", "broadcast": True}},
+            "result": envelope({"chat": {"type": "Channel", "tg_id": 7,
+                                         "title": "Вещание",
+                                         "broadcast": True}}),
         })
 
         self.assertEqual(line["verdict"], "найден")
@@ -415,11 +433,47 @@ class ResultTableTests(unittest.TestCase):
         """В базе результат лежит текстом — строка обязана его разобрать."""
         line = research.row({
             "action": "check_channel_dm_metadata", "state": "done",
-            "result": json.dumps({"availability": "available",
-                                  "public_username": "x"}),
+            "result": json.dumps(envelope({"availability": "available",
+                                           "public_username": "x"})),
         })
 
         self.assertEqual(line["verdict"], "есть личка")
+
+    def test_a_bare_payload_is_read_too(self):
+        """Без конверта — так действие выглядит по ту сторону моста."""
+        line = research.row({
+            "action": "check_public_chat_metadata", "state": "done",
+            "result": {"decision": "eligible", "chat": {"username": "x"}},
+        })
+
+        self.assertEqual(line["verdict"], "можно писать")
+
+    def test_the_live_answer_is_read(self):
+        """Дословный ответ Radar на первую настоящую проверку 03.08.2026."""
+        line = research.row({
+            "action": "check_public_chat_metadata", "state": "done",
+            "target": "auto_eu1",
+            "result": json.dumps({
+                "completed_at": "2026-08-03T20:40:01.826340+00:00",
+                "data": {
+                    "chat": {
+                        "broadcast": False, "broadcast_messages_allowed": False,
+                        "fake": False, "forum": False, "megagroup": True,
+                        "monoforum": False, "scam": False, "tg_id": 2338882588,
+                        "title": "Авто из Европы В Россию🇪🇺 Chat",
+                        "type": "Channel", "username": "auto_eu1",
+                        "verified": False,
+                    },
+                    "decision": "eligible", "structurally_writable": True,
+                },
+                "error": None, "outcome": "succeeded",
+            }),
+        })
+
+        self.assertEqual(line["verdict"], "можно писать")
+        self.assertEqual(line["kind"], "супергруппа")
+        self.assertEqual(line["tg_id"], 2338882588)
+        self.assertEqual(line["username"], "auto_eu1")
 
     def test_summary_counts_verdicts(self):
         counts = research.summary([
