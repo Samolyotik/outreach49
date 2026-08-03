@@ -186,6 +186,36 @@ def candidates(store: Store, action: str) -> list[dict]:
     return result
 
 
+def resume_one(store: Store, role: str, *, actor: str = "cli") -> dict | None:
+    """Снять паузу ровно с одного аккаунта роли. Возвращает его или `None`.
+
+    Ступень постепенного ввода. Вводить флот залпом нельзя — если что-то не
+    так с разбором ответа или с самими целями, узнаешь об этом сразу на всех.
+    Вводить руками по одному тоже плохо: ступень тогда равна тому, как скоро
+    у человека дойдут руки, а это не темп, а случайность.
+
+    Берётся аккаунт с наименьшим id — не потому, что он чем-то лучше, а чтобы
+    порядок ввода был воспроизводим и по журналу читалось, кто следующий.
+    """
+    row = store.one(
+        "SELECT id FROM accounts WHERE role = ? AND paused = 1 AND enabled = 1 "
+        "ORDER BY id LIMIT 1",
+        (str(role),),
+    )
+    if row is None:
+        return None
+    account_id = int(row["id"])
+    store.execute("UPDATE accounts SET paused = 0 WHERE id = ?", (account_id,))
+    left = store.one(
+        "SELECT count(*) AS n FROM accounts WHERE role = ? AND paused = 1",
+        (str(role),),
+    )
+    store.log(actor, "accounts.ramp", str(account_id),
+              f"role={role} осталось={left['n']}")
+    store.commit()
+    return {"id": account_id, "left": int(left["n"])}
+
+
 def pause(store: Store, account_id: int, paused: bool, *, actor: str = "cli") -> None:
     store.execute(
         "UPDATE accounts SET paused = ? WHERE id = ?",

@@ -340,6 +340,43 @@ class ReadCadenceTests(unittest.TestCase):
         self.assertEqual([t["action"] for t in only_read],
                          ["check_channel_dm_metadata"])
 
+    # -- постепенный ввод ----------------------------------------------------
+
+    def test_the_ramp_admits_one_account_at_a_time(self):
+        """Ступень ввода — ровно один аккаунт, в воспроизводимом порядке."""
+        accounts_mod.sync(self.store, [
+            {"id": 802, "label": "r2", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["source_reader"],
+                          "allowed_actions": ["check_public_chat_metadata"]}},
+            {"id": 803, "label": "r3", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["source_reader"],
+                          "allowed_actions": ["check_public_chat_metadata"]}},
+        ])
+        for account_id in (802, 803):
+            accounts_mod.pause(self.store, account_id, True)
+
+        first = accounts_mod.resume_one(self.store, "source_reader")
+        second = accounts_mod.resume_one(self.store, "source_reader")
+        third = accounts_mod.resume_one(self.store, "source_reader")
+
+        self.assertEqual(first["id"], 802)
+        self.assertEqual(first["left"], 1)
+        self.assertEqual(second["id"], 803)
+        self.assertEqual(second["left"], 0)
+        # Список кончился — ступень становится пустой, а не ошибкой.
+        self.assertIsNone(third)
+
+    def test_the_ramp_does_not_touch_other_roles(self):
+        accounts_mod.sync(self.store, [
+            {"id": 804, "label": "sender", "runtime_state": "running",
+             "outreach": {"enabled": True, "roles": ["dm_sender"],
+                          "allowed_actions": ["send_private_dm"]}},
+        ])
+        accounts_mod.pause(self.store, 804, True)
+
+        self.assertIsNone(accounts_mod.resume_one(self.store, "source_reader"))
+        self.assertTrue(accounts_mod.get(self.store, 804)["paused"])
+
     # -- кому поручаем -------------------------------------------------------
 
     def test_a_campaign_can_narrow_the_pool_to_readers(self):

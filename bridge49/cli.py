@@ -239,6 +239,17 @@ def cmd_accounts(args) -> int:
             accounts_mod.pause(store, args.resume, False, actor=args.actor)
             print(f"аккаунт {args.resume} снова в работе")
             return 0
+        if args.resume_one:
+            step = accounts_mod.resume_one(
+                store, args.resume_one, actor=args.actor)
+            if step is None:
+                print(f"на паузе не осталось ни одного {args.resume_one}")
+                return 0
+            print(report.good(
+                f"аккаунт {step['id']} введён в работу; "
+                f"на паузе осталось {step['left']}"
+            ))
+            return 0
 
         rows = accounts_mod.all_accounts(store)
         if args.role:
@@ -1024,6 +1035,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--role", help="фильтр по роли")
     p.add_argument("--pause", type=int, metavar="ID")
     p.add_argument("--resume", type=int, metavar="ID")
+    p.add_argument("--resume-one", dest="resume_one", metavar="ROLE",
+                   choices=sorted(catalog.ROLES),
+                   help="ввести в работу один приостановленный аккаунт роли "
+                        "(ступень постепенного ввода)")
     p.set_defaults(func=cmd_accounts)
 
     p = sub.add_parser("actions", help="какие действия вообще бывают")

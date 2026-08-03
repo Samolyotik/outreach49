@@ -1,0 +1,16 @@
+[Unit]
+Description=outreach49 — ввести в работу очередного читателя
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Ступень постепенного ввода: за раз снимается пауза ровно с одного аккаунта.
+# Когда на паузе не осталось никого — прогон становится пустым, и таймер можно
+# выключить. Сам он не выключается намеренно: остановка ввода — решение
+# человека, а не побочный эффект того, что список кончился.
+ExecStart=/opt/outreach49/bin/bridge49 accounts --resume-one source_reader
+
+[Install]
+WantedBy=multi-user.target
