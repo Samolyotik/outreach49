@@ -10,7 +10,10 @@ Environment=BRIDGE49_HOME=/opt/outreach49
 # контура: сессия Codex общая по решению владельца от 03.08.2026, отдельного
 # логина у outreach49 нет.
 EnvironmentFile=/etc/tgradar-outreach/production.env
-Environment=OUTREACH_LLM_COMMAND=/opt/outreach49/venv/bin/python /opt/outreach49/scripts/codex_llm_wrapper.py
+# Кавычки обязательны: без них systemd режет значение по пробелу, переменной
+# достаётся только путь к python, а сам скрипт молча отбрасывается —
+# «Invalid environment assignment». Модель тогда не вызывается вовсе.
+Environment="OUTREACH_LLM_COMMAND=/opt/outreach49/venv/bin/python /opt/outreach49/scripts/codex_llm_wrapper.py"
 # Один вызов модели идёт 20–60 секунд, разбор идёт по одному входящему за раз.
 # Двадцать сообщений в худшем случае — двадцать минут, поэтому запас большой.
 TimeoutStartSec=1800
