@@ -119,16 +119,49 @@ def cmd_doctor(args) -> int:
     # командой, а не вычитываться из limits.json и кода по частям.
     limits = settings.limits
     days = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
-    print(report.section("темп"))
+
+    def _days(weekdays) -> str:
+        return ", ".join(days[d] for d in weekdays) or "—"
+
+    print(report.section("темп: рассылка"))
     print(report.kv([
         ("в сутки на аккаунт", limits.per_account_daily_visible),
         ("пауза между отправками",
          f"{limits.per_account_visible_interval_sec} с "
          f"(+ до {limits.per_account_visible_jitter_sec} с разброса)"),
+        ("между аккаунтами",
+         f"{limits.global_visible_interval_min_sec}–"
+         f"{limits.global_visible_interval_max_sec} с"),
         ("за один прогон", limits.dispatch_batch),
         ("окно", f"{limits.send_window_start_hour}:00–"
                  f"{limits.send_window_end_hour}:00 {settings.timezone}"),
-        ("дни", ", ".join(days[d] for d in limits.send_weekdays) or "—"),
+        ("дни", _days(limits.send_weekdays)),
+    ]))
+    # Три класса темпа считаются раздельно, и увидеть их надо тоже раздельно:
+    # во время поэтапного запуска разведки именно её числа и меняют.
+    print(report.section("темп: ответы"))
+    print(report.kv([
+        ("в сутки на аккаунт", limits.reply_per_account_daily),
+        ("пауза между ответами", f"{limits.reply_per_account_interval_sec} с"),
+        ("между аккаунтами",
+         f"{limits.reply_global_interval_min_sec}–"
+         f"{limits.reply_global_interval_max_sec} с"),
+        ("окно", f"{limits.reply_window_start_hour}:00–"
+                 f"{limits.reply_window_end_hour}:00 {settings.timezone}"),
+        ("дни", _days(limits.reply_weekdays)),
+    ]))
+    print(report.section("темп: разведка"))
+    print(report.kv([
+        ("в сутки на аккаунт", limits.read_per_account_daily),
+        ("пауза между чтениями",
+         f"{limits.read_per_account_interval_sec} с "
+         f"(+ до {limits.read_per_account_interval_jitter_sec} с разброса)"),
+        ("между аккаунтами",
+         f"{limits.read_global_interval_min_sec}–"
+         f"{limits.read_global_interval_max_sec} с"),
+        ("окно", f"{limits.read_window_start_hour}:00–"
+                 f"{limits.read_window_end_hour}:00 {settings.timezone}"),
+        ("дни", _days(limits.read_weekdays)),
     ]))
     for note in settings.limits_notes:
         print(report.warn(f"limits.json зажат полом → {note}"))
