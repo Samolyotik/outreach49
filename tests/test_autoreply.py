@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import sys
 import tempfile
 import unittest
@@ -70,9 +70,9 @@ class AutoReplyTests(unittest.TestCase):
         )
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(5001,821,'private_dm','@someone','someone',?,'{}',?)",
-            ("Сколько стоит?", now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(5001,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            ("Сколько стоит?", now(), now()),
         )
         self.store.commit()
         self.inbound = dict(
@@ -251,9 +251,9 @@ class AutoReplyRunTests(unittest.TestCase):
     def add_inbound(self, ident: int, text: str, peer: str = "@someone"):
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(?,821,'private_dm',?,?,?,'{}',?)",
-            (ident, peer, peer.lstrip("@"), text, now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(?,821,'private_dm',?,?,?,?,'{}',?)",
+            (ident, peer, peer.lstrip("@"), text, now(), now()),
         )
         self.store.commit()
 
@@ -346,9 +346,9 @@ class LlmBoundaryTests(unittest.TestCase):
         )
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(7001,821,'private_dm','@someone','someone',?,'{}',?)",
-            ("Сколько стоит?", now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(7001,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            ("Сколько стоит?", now(), now()),
         )
         # Разговор начали мы — иначе сработают ворота на посторонних и до
         # модели дело не дойдёт. Сами ворота проверяются в StrangerGateTests.
@@ -444,9 +444,9 @@ class StrangerGateTests(unittest.TestCase):
         )
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(8001,821,'private_dm','@stranger','stranger',?,'{}',?)",
-            ("سلام خوبی؟", now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(8001,821,'private_dm','@stranger','stranger',?,?,'{}',?)",
+            ("سلام خوبی؟", now(), now()),
         )
         self.store.commit()
 
@@ -540,9 +540,9 @@ class ArabicScriptGateTests(unittest.TestCase):
         )
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(9600,821,'private_dm',?,?,?,'{}',?)",
-            (f"@{username}", username, text, now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(9600,821,'private_dm',?,?,?,?,'{}',?)",
+            (f"@{username}", username, text, now(), now()),
         )
         self.store.commit()
         return dict(self.store.one("SELECT * FROM inbound WHERE id = 9600"))
@@ -636,9 +636,9 @@ class RepeatedRepliesTests(unittest.TestCase):
     def add_inbound(self, ident: int, text: str):
         self.store.execute(
             "INSERT INTO inbound(id, account_id, surface, peer_key, "
-            "peer_username, text, raw, created_at) "
-            "VALUES(?,821,'private_dm','@someone','someone',?,'{}',?)",
-            (ident, text, now()),
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(?,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            (ident, text, now(), now()),
         )
         self.store.commit()
         return dict(self.store.one("SELECT * FROM inbound WHERE id = ?", (ident,)))
@@ -681,3 +681,172 @@ class RepeatedRepliesTests(unittest.TestCase):
         self.store.commit()
         with self.assertRaises(sqlite3.IntegrityError):
             add_outreach_task()
+
+
+class StaleInboundGateTests(unittest.TestCase):
+    """Машина не отвечает на то, что успело состариться.
+
+    Автоответ по устройству отвечает так, будто человек написал только что:
+    `reply_moment` прямо подтягивает просроченный момент к «сейчас». Для живого
+    фида это верно — поллер ходит раз в пятнадцать секунд. Но на аккаунтах
+    лежит перенесённая переписка прежних владельцев и очередь недоотвеченного
+    за три недели, и любой путь, которым старое сообщение попало бы в `inbound`
+    — сбой поллера, повторная публикация из журнала респондера, откат курсора,
+    восстановление базы из резервной копии, — обернулся бы бодрым ответом на
+    письмо трёхнедельной давности.
+
+    Поэтому у машины есть граница давности. Она не отменяет ответ, а передаёт
+    решение человеку: уместен ли ещё ответ, видно только ему.
+    """
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+
+        contact = entities.add_contact(self.store, username="vadim",
+                                       segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.thread_id = new_id("thread")
+        # Диалог наш: первое слово было нашим, значит ворота на посторонних
+        # открыты и сработать может только гейт давности.
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, last_outbound_at, created_at, updated_at) "
+            "VALUES(?,821,'@vadim',?,'private_dm','open',?,?,?)",
+            (self.thread_id, self.contact_id, now(), now(), now()),
+        )
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add_inbound(self, sent_at, *, row_id=9101, text="Добрый день"):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, contact_id, created_at) "
+            "VALUES(?,821,'private_dm','@vadim','vadim',?,?,'{}',?,?)",
+            (row_id, text, sent_at, self.contact_id, now()),
+        )
+        self.store.commit()
+        return dict(self.store.one("SELECT * FROM inbound WHERE id = ?", (row_id,)))
+
+    def exploding_model(self):
+        def caller(*args, **kwargs):
+            raise AssertionError("модель не должна вызываться для старого письма")
+        return caller
+
+    def test_age_is_counted_from_the_telegram_stamp(self):
+        """Давность разговора, а не давность нашей копии.
+
+        `created_at` у записи всегда «сейчас» — она завелась при опросе. Если
+        считать по ней, гейт не сработает никогда, ровно в том случае, для
+        которого он и написан: старое сообщение, только что попавшее в базу.
+        """
+        moment = datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc)
+        inbound = self.add_inbound("2026-07-20T09:00:00+00:00")
+
+        age = autoreply.inbound_age_hours(inbound, at=moment)
+
+        self.assertAlmostEqual(age, 15 * 24 + 3, places=1)
+
+    def test_a_three_week_old_letter_gets_a_card_and_no_model_call(self):
+        self.add_inbound("2026-07-14T08:00:00+00:00")
+
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["queued"], 0)
+        card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
+        self.assertIn("пролежало", card["reason"])
+        self.assertIn("предел 24 ч", card["reason"])
+
+    def test_a_fresh_message_still_reaches_the_model(self):
+        """Гейт не должен задевать живой фид — там счёт идёт на секунды."""
+        self.add_inbound(datetime.now(timezone.utc).isoformat())
+
+        seen = []
+
+        def caller(*args, **kwargs):
+            seen.append(True)
+            raise RuntimeError("до модели дошло, дальше не важно")
+
+        result = autoreply.run(self.store, self.settings, llm_caller=caller)
+
+        self.assertEqual(result["skipped"], 0, "свежее письмо не должно отсекаться")
+        self.assertTrue(seen, "модель должна была быть вызвана")
+
+    def test_an_overnight_message_is_still_answered(self):
+        """Написали ночью, разбираем утром — это нормальная переписка.
+
+        Сутки взяты именно поэтому: ночной наплыв должен доезжать до модели,
+        отсекается только то, что уже точно не разговор.
+        """
+        recent = datetime.now(timezone.utc) - timedelta(hours=9)
+        inbound = self.add_inbound(recent.isoformat())
+        thread = dict(self.store.one("SELECT * FROM threads WHERE id = ?",
+                                     (self.thread_id,)))
+
+        self.assertEqual(
+            autoreply.skip_reason(self.store, inbound, thread, self.settings), ""
+        )
+
+    def test_the_limit_is_configurable_and_capped(self):
+        from bridge49.config import HARD_MAX_INBOUND_AGE_HOURS, Limits, clamp
+
+        limits = Limits(reply_max_inbound_age_hours=1000)
+        notes = clamp(limits)
+
+        self.assertEqual(limits.reply_max_inbound_age_hours,
+                         HARD_MAX_INBOUND_AGE_HOURS)
+        self.assertTrue(any("reply_max_inbound_age_hours" in n for n in notes))
+
+    def test_zero_means_the_machine_answers_nothing(self):
+        """Осмысленный аварийный режим: выключить машину, не выключая фид."""
+        from bridge49.config import Limits, Settings
+
+        settings = Settings(
+            home=self.settings.home, db_path=self.settings.db_path, dsn=None,
+            limits=Limits(reply_max_inbound_age_hours=0),
+            timezone="Europe/Moscow",
+        )
+        self.add_inbound(datetime.now(timezone.utc).isoformat())
+
+        result = autoreply.run(self.store, settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["queued"], 0)
+
+    def test_an_unreadable_stamp_is_treated_as_infinitely_old(self):
+        """Предохранитель отказывает в сторону человека, а не модели.
+
+        Даты быть не может: продюсер конверта в Radar пишет её безусловно и
+        падает на дате без часового пояса. Значит пустое время — сломанный
+        конверт, и решать по нему должен человек.
+        """
+        inbound = self.add_inbound("не дата")
+
+        self.assertEqual(autoreply.inbound_age_hours(inbound), float("inf"))
+
+    def test_a_missing_stamp_goes_to_a_human(self):
+        self.add_inbound(None, row_id=9102)
+
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+
+        self.assertEqual(result["skipped"], 1)
+        self.assertEqual(result["queued"], 0)
+        card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
+        self.assertEqual(card["reason"], "у входящего нет времени отправки")

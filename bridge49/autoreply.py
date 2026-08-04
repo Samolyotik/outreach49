@@ -434,12 +434,50 @@ def arabic_script_peer(store: Store, inbound: dict, thread: dict) -> bool:
     return any(ARABIC_SCRIPT.search(str(part or "")) for part in parts)
 
 
+def inbound_age_hours(inbound: dict, *, at: datetime | None = None) -> float:
+    """Сколько часов прошло с момента, когда человек это написал.
+
+    Считается от `sent_at` — времени по Telegram, а не от того, когда запись
+    завелась у нас. Разница принципиальная: `created_at` у старого сообщения,
+    только что попавшего в базу, будет «сейчас», и гейт давности по нему не
+    сработал бы ровно в том случае, для которого написан.
+
+    Нечитаемой даты быть не должно: продюсер конверта в Radar пишет дату
+    безусловно и падает на дате без часового пояса, то есть сообщение без даты
+    не публикуется вовсе. Поэтому пустое или нечитаемое время — признак
+    сломанного конверта, и считается оно бесконечно старым, а не свежим:
+    предохранитель обязан отказывать в сторону человека.
+    """
+    raw = str(inbound.get("sent_at") or "")
+    try:
+        sent = datetime.fromisoformat(raw)
+    except ValueError:
+        return float("inf")
+    if sent.tzinfo is None:
+        sent = sent.replace(tzinfo=timezone.utc)
+    moment = at or datetime.now(timezone.utc)
+    return max(0.0, (moment - sent).total_seconds() / 3600.0)
+
+
 def skip_reason(store: Store, inbound: dict, thread: dict, settings) -> str:
     """Почему с этим входящим машина не работает. Пусто — работает."""
     if arabic_script_peer(store, inbound, thread):
         return "собеседник записан арабским письмом"
     if not (settings.autoreply_strangers or we_started_it(store, thread)):
         return "входящее от постороннего"
+    limit = int(settings.limits.reply_max_inbound_age_hours)
+    age = inbound_age_hours(inbound)
+    if age > limit:
+        # Живой фид сюда не попадает: поллер ходит раз в пятнадцать секунд.
+        # Сработавший гейт означает, что в очереди оказалась старая переписка —
+        # и это не редкость, а штатный путь: Radar при старте аккаунта сам
+        # добирает из истории ответы, пришедшие пока аккаунт стоял
+        # (`sync_outreach_private_dm_history`), и публикует их с подлинной
+        # старой датой. Разбирать такое должен человек: уместен ли ещё ответ,
+        # видно только ему.
+        if age == float("inf"):
+            return "у входящего нет времени отправки"
+        return f"входящее пролежало {age:.0f} ч (предел {limit} ч)"
     return ""
 
 
