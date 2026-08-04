@@ -74,7 +74,20 @@ def main() -> int:
     return 0
 
 
+def is_plain_prompt_payload(payload: Dict[str, Any]) -> bool:
+    """Задача, у которой уже есть свой промпт целиком.
+
+    Обёртка писалась под presales, и обе её ветки клеят к запросу presales-
+    инструкции: как отвечать клиенту, когда звать менеджера, что считать
+    спамом. Для классификации это не просто лишнее, а вредное — модель
+    получает два противоречащих задания сразу.
+    """
+    return str(payload.get("prompt_mode") or "").strip() == "plain"
+
+
 def build_codex_prompt(payload: Dict[str, Any]) -> str:
+    if is_plain_prompt_payload(payload):
+        return str(payload.get("prompt") or "")
     if is_presales_v2_payload(payload):
         compact_payload = dict(payload)
         compact_payload.pop("output_schema", None)
