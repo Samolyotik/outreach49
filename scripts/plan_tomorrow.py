@@ -52,11 +52,17 @@ MIN_ACCOUNT_GAP_MIN = 45
 #: Доля шага, на которую слот может сдвинуться в любую сторону.
 JITTER_RATIO = 0.35
 
-#: Роль → чем она пишет и из какого пула берёт цели.
+#: Роль → чем она пишет и из какого пула берёт цели. Пул берётся из разведки:
+#: канал или чат попадает сюда, только если проверка прошла успешно и мы туда
+#: ещё не писали.
 LANES = {
     "channel_sender": ("send_channel_dm", "recon_channels", "channel"),
     "chat_sender": ("send_public_chat_message", "recon_chats", "chat"),
 }
+
+#: Личка отдельно: её цели — живые люди из лидов бизнеса 140, и приходят они
+#: файлом от `export_b140_candidates.py`, а не из нашей разведки.
+DM_LANE = ("dm_sender", "send_private_dm", "лс")
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -123,7 +129,8 @@ def jitter_minutes(seed: str, step_min: float) -> float:
 
 
 def build(db: Path, *, date: str, per_account: int,
-          from_hour: int, to_hour: int) -> dict:
+          from_hour: int, to_hour: int,
+          dm_pool: list[dict] | None = None) -> dict:
     conn = connect(db)
     try:
         accounts = ready_accounts(conn)
@@ -149,6 +156,7 @@ def build(db: Path, *, date: str, per_account: int,
     # Новые касания добираются до потолка, по кругу: аккаунты идут по очереди,
     # и каждый берёт по одной цели за виток. Иначе первый аккаунт вычерпал бы
     # пул целиком, а остальные остались бы без работы.
+    dm_pool = list(dm_pool or [])
     left_over = {lane: 0 for lane in LANES}
     for lane, (action, _, kind) in LANES.items():
         eligible = [a for a in accounts if lane in a["roles"]]
@@ -168,6 +176,26 @@ def build(db: Path, *, date: str, per_account: int,
                     "contact_id": target["contact_id"],
                 })
         left_over[lane] = max(0, len(pool) - cursor)
+
+    if dm_pool:
+        lane, action, kind = DM_LANE
+        eligible = [a for a in accounts if lane in a["roles"]]
+        cursor = 0
+        for _ in range(per_account):
+            for account in eligible:
+                slots = by_account.setdefault(account["id"], [])
+                if len(slots) >= per_account or cursor >= len(dm_pool):
+                    continue
+                target = dm_pool[cursor]
+                cursor += 1
+                slots.append({
+                    "вид": kind,
+                    "действие": action,
+                    "кому": target["username"],
+                    "категория": target.get("категория"),
+                    "повод": str(target.get("сообщение") or "")[:120],
+                })
+        left_over[lane] = max(0, len(dm_pool) - cursor)
 
     plan = [(acc, item) for acc, items in by_account.items() for item in items]
     total = len(plan)
@@ -249,13 +277,22 @@ def main() -> int:
     parser.add_argument("--db", default="var/bridge49.sqlite")
     parser.add_argument("--date", required=True)
     parser.add_argument("--per-account", type=int, default=5)
-    parser.add_argument("--from-hour", type=int, default=9)
+    parser.add_argument("--from-hour", type=int, default=10)
     parser.add_argument("--to-hour", type=int, default=21)
+    parser.add_argument("--dm-candidates",
+                        help="файл от export_b140_candidates.py")
     parser.add_argument("--out")
     args = parser.parse_args()
 
+    dm_pool: list[dict] = []
+    if args.dm_candidates:
+        payload = json.loads(
+            Path(args.dm_candidates).read_text(encoding="utf-8"))
+        dm_pool = payload.get("кандидаты") or []
+
     plan = build(Path(args.db), date=args.date, per_account=args.per_account,
-                 from_hour=args.from_hour, to_hour=args.to_hour)
+                 from_hour=args.from_hour, to_hour=args.to_hour,
+                 dm_pool=dm_pool)
     summarize(plan)
     if args.out:
         Path(args.out).write_text(
