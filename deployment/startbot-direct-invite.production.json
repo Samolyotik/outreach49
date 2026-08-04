@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "active_sector_ids": [
+    "auto_import_dealers",
+    "real_estate_investment",
+    "logistics_ved_china",
+    "bankruptcy_debt_relief",
+    "legal_services_business_private",
+    "tourism_visas_relocation"
+  ],
+  "validity_days": 7,
+  "max_attempts": 5,
+  "sector_profiles": {
+    "auto_import_dealers": {
+      "outreach_sector_id": "auto_import_dealers",
+      "sector_id": "cars_abroad",
+      "sector_name": "Авто из-за границы",
+      "test_group_profile_id": "cars_abroad_test_group"
+    },
+    "real_estate_investment": {
+      "outreach_sector_id": "real_estate_investment",
+      "sector_id": "real_estate_investment",
+      "sector_name": "Недвижимость: продажа, зарубежная, инвестиции, флиппинг",
+      "test_group_profile_id": "real_estate_investment_test_group"
+    },
+    "logistics_ved_china": {
+      "outreach_sector_id": "logistics_ved_china",
+      "sector_id": "logistics_ved_china",
+      "sector_name": "ВЭД, Китай, международная доставка и логистика",
+      "test_group_profile_id": "logistics_ved_china_test_group"
+    },
+    "bankruptcy_debt_relief": {
+      "outreach_sector_id": "bankruptcy_debt_relief",
+      "sector_id": "bankruptcy_debt_relief",
+      "sector_name": "Банкротство и списание долгов (физлиц, компаний и ИП)",
+      "test_group_profile_id": "bankruptcy_debt_relief_test_group"
+    },
+    "legal_services_business_private": {
+      "outreach_sector_id": "legal_services_business_private",
+      "sector_id": "legal_services_business_private",
+      "sector_name": "Юридические услуги для бизнеса и физлиц",
+      "test_group_profile_id": "legal_services_business_private_test_group"
+    },
+    "tourism_visas_relocation": {
+      "outreach_sector_id": "tourism_visas_relocation",
+      "sector_id": "tourism_visas_relocation",
+      "sector_name": "Туризм, визы и релокация",
+      "test_group_profile_id": "tourism_visas_relocation_test_group"
+    }
+  }
+}

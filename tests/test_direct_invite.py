@@ -113,6 +113,91 @@ class BranchConfigTests(unittest.TestCase):
         )
 
 
+class ProductionConfigTests(unittest.TestCase):
+    """Боевой конфиг проверяется как код, а не глазами.
+
+    Ошибиться тут — значит увести человека в чужую тестовую группу: сторона
+    StartBot принимает `sector_id` и `test_group_profile_id` свободной строкой,
+    без списка допустимых значений, поэтому опечатка не отвергается, а
+    исполняется.
+    """
+
+    PATH = Path(__file__).resolve().parents[1] / (
+        "deployment/startbot-direct-invite.production.json")
+
+    #: Шесть сфер, подтверждённых стороной StartBot 04.08.
+    EXPECTED = {
+        "auto_import_dealers": ("cars_abroad", "cars_abroad_test_group"),
+        "real_estate_investment": (
+            "real_estate_investment", "real_estate_investment_test_group"),
+        "logistics_ved_china": (
+            "logistics_ved_china", "logistics_ved_china_test_group"),
+        "bankruptcy_debt_relief": (
+            "bankruptcy_debt_relief", "bankruptcy_debt_relief_test_group"),
+        "legal_services_business_private": (
+            "legal_services_business_private",
+            "legal_services_business_private_test_group"),
+        "tourism_visas_relocation": (
+            "tourism_visas_relocation", "tourism_visas_relocation_test_group"),
+    }
+
+    def setUp(self):
+        self.branch = direct_invite.BranchConfig.from_path(self.PATH)
+
+    def test_every_route_points_where_startbot_expects(self):
+        for route_id, (sector_id, profile_id) in self.EXPECTED.items():
+            with self.subTest(route_id):
+                profile = self.branch.route_for(route_id)
+                self.assertEqual(profile.sector_id, sector_id)
+                self.assertEqual(profile.test_group_profile_id, profile_id)
+
+    def test_all_six_are_switched_on(self):
+        self.assertTrue(self.branch.enabled)
+        self.assertEqual(set(self.branch.active_sector_ids), set(self.EXPECTED))
+
+    def test_each_sector_has_its_own_test_group(self):
+        """Общая группа у двух сфер = чужие люди в одном тесте."""
+        groups = [p.test_group_profile_id
+                  for p in self.branch.sector_profiles.values()]
+        self.assertEqual(len(groups), len(set(groups)), "группа переиспользована")
+
+    def test_startbot_names_are_unambiguous(self):
+        """`resolve_route_sector_id` возвращает маршрут только при ровно одном
+        совпадении. Дубль `sector_id` тихо увёл бы разбор в менеджерскую ветку."""
+        ids = [p.sector_id for p in self.branch.sector_profiles.values()]
+        self.assertEqual(len(ids), len(set(ids)))
+        for route_id, (sector_id, _) in self.EXPECTED.items():
+            with self.subTest(route_id):
+                self.assertEqual(
+                    self.branch.resolve_route_sector_id(sector_id), route_id)
+
+    def test_unknown_sector_stays_closed(self):
+        for name in ("marketing", "medicine", "cars_abroad_test_group", ""):
+            with self.subTest(name), self.assertRaises(direct_invite.BranchInactive):
+                self.branch.route_for(name)
+        self.assertIsNone(self.branch.context_for_sector("medicine"))
+
+    def test_catalog_shown_to_the_engine_matches_the_file(self):
+        catalog = self.branch.active_sector_catalog()
+        self.assertEqual(
+            {item["outreach_sector_id"] for item in catalog}, set(self.EXPECTED))
+        for item in catalog:
+            with self.subTest(item["outreach_sector_id"]):
+                self.assertTrue(item["sector_name"].strip())
+
+    def test_message_survives_every_sector_name(self):
+        """Название сферы уходит в письмо человеку дословно. Длинное имя со
+        скобками не должно ломать ни одну из формулировок."""
+        for route_id in self.EXPECTED:
+            profile = self.branch.route_for(route_id)
+            for seed in ("a", "b", "c", "d", "e", "f", "g", "h"):
+                with self.subTest(route_id, seed=seed):
+                    text = direct_invite.render_invite_message(
+                        profile.sector_name, LINK, seed=seed)
+                    self.assertIn(profile.sector_name, text)
+                    self.assertIn(LINK, text)
+
+
 class DecisionReadingTests(unittest.TestCase):
     def test_consent_only_for_free_test_access(self):
         self.assertTrue(direct_invite.consent_from_decision(
