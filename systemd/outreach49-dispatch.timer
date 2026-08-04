@@ -1,11 +1,17 @@
 [Unit]
-Description=outreach49 dispatch каждые 5 минут
+Description=outreach49 dispatch каждые 2 минуты
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=5min
-AccuracySec=30s
-RandomizedDelaySec=60
+# Шаг мельче не для того, чтобы писать чаще: сколько уйдёт, решает пауза флота
+# (5–15 минут между письмами), а не таймер. Мелкий шаг нужен, чтобы выпуск не
+# отставал от собственных сроков: при пятиминутном шаге пропущенный прогон —
+# замок был занят или пауза не истекла на секунды — стоил задаче лишних пяти
+# минут, и отставание копилось от письма к письму.
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+# Разводим с минутным таймером разведки, чтобы реже спорить за замок.
+RandomizedDelaySec=20
 
 [Install]
 WantedBy=timers.target

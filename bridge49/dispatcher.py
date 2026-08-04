@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import random
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -79,19 +80,36 @@ class DispatchBusy(RuntimeError):
     """Другой процесс уже выпускает задачи."""
 
 
+#: Сколько ждать чужой прогон, прежде чем сдаться. Замок один на все классы, а
+#: таймеры у них разные: разведка ходит раз в минуту и держит его секунд
+#: двадцать, рассылка — раз в две минуты. Без ожидания рассылка регулярно
+#: заставала замок занятым и пропускала прогон целиком, отставая от собственных
+#: сроков; с ожиданием она просто дожидается своей очереди.
+#:
+#: Разделить замок по классам было бы неверно: прогон без фильтра берёт все
+#: классы разом, и тогда он ничего не знал бы про чужие частные замки — два
+#: процесса выпустили бы одну задачу дважды.
+LOCK_WAIT_SEC = 45.0
+
+
 @contextmanager
-def exclusive(settings: Settings):
+def exclusive(settings: Settings, *, wait_sec: float = 0.0):
     """Один выпускающий процесс на установку."""
     path = Path(settings.home) / "var" / "dispatch.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = path.open("w")
+    deadline = time.monotonic() + max(0.0, float(wait_sec))
     try:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise DispatchBusy(
-                f"другой dispatch уже работает (блокировка {path})"
-            ) from exc
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    raise DispatchBusy(
+                        f"другой dispatch уже работает (блокировка {path})"
+                    ) from exc
+                time.sleep(0.5)
         yield
     finally:
         try:
@@ -661,7 +679,7 @@ async def dispatch(
     limit = int(limit or settings.limits.dispatch_batch)
     armed = settings.armed
     if confirm and armed:
-        with exclusive(settings):
+        with exclusive(settings, wait_sec=LOCK_WAIT_SEC):
             return await _dispatch_armed(
                 store, settings, campaign_id=campaign_id, cadence=cadence,
                 limit=limit, actor=actor,
