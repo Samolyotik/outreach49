@@ -1,0 +1,260 @@
+"""Первое личное сообщение: текст под конкретного человека.
+
+Холодное письмо тем и отличается от рассылки, что говорит о деле адресата. У
+прежнего контура это делал `tgradar_dm_preparation.py`: модель получает само
+сообщение человека и пишет три-четыре фразы, привязанные к его запросу. Здесь
+перенесены и промпт, и — что важнее — проверки готового текста.
+
+Проверки не украшение. Сформулировать «примерно то же самое» модель может
+десятком способов, и половина из них навредит: назовёт бренд человеку, который
+о нас не спрашивал; напишет от первого лица, хотя пишет команда; пообещает
+трафик, которого мы не продаём. Поэтому текст, не прошедший `validate_text`,
+не отправляется — он возвращается человеку как черновик.
+
+## Схема письма
+
+    Здравствуйте! Увидели ваше сообщение в чате про ...
+    У нас есть сервис, который находит в мессенджерах и социальных сетях
+    сообщения людей, которым нужны ...
+    Если хотите, можем бесплатно показать, как он работает. Интересно?
+
+Первая фраза — про его ситуацию, третья — про его товар или услугу. Середина
+неизменна: это то, что мы действительно делаем, и переписывать её нельзя.
+
+## Чего в тексте быть не должно
+
+Название бренда, ссылки, username, эмодзи, длинные тире, цифры и обещания.
+Слово «открытые» (источники) — тоже: оно превращает письмо в отчёт о слежке.
+Охват называется всегда парой «мессенджеры и социальные сети»: только Telegram
+— это неправда, а неправда в первом же письме дороже любой конверсии.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Mapping, Sequence
+
+#: Ровно те проверки, что стояли у прежнего контура. Значения перенесены как
+#: есть: они выверены на живой переписке, а не выведены из общих соображений.
+BRAND_RE = re.compile(r"\b(?:tg\s*radar|tgradar|тг\s*радар|теградар)\b", re.IGNORECASE)
+LINK_RE = re.compile(r"https?://|www\.|t\.me/|@[A-Za-z0-9_]", re.IGNORECASE)
+VALUE_RE = re.compile(
+    r"(?:инструмент|сервис|система|запрос\w*|обращен\w*|сигнал\w*|монитор\w*|"
+    r"чат\w*|мессенджер\w*|соцсет\w*|социальн\w*|telegram|телеграм|клиент\w*)",
+    re.IGNORECASE,
+)
+OPEN_WORD_RE = re.compile(r"\bоткрыт\w*\b", re.IGNORECASE)
+MESSENGER_RE = re.compile(r"\bмессенджер\w*\b", re.IGNORECASE)
+SOCIAL_NETWORK_RE = re.compile(r"\b(?:соцсет\w*|социальн\w+\s+сет\w*)\b", re.IGNORECASE)
+EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
+LONG_DASH_RE = re.compile(r"[—–]")
+CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
+
+#: Первое лицо единственного числа. Пишет команда, а не человек: «увидели»,
+#: «можем», «покажем». Иначе адресат ждёт личного собеседника, которого нет.
+SINGULAR_RE = re.compile(
+    r"\b(?:я|мне|меня|могу|покажу|увидел|увидела|заметил|заметила|пишу)\b",
+    re.IGNORECASE,
+)
+
+MAX_LENGTH = 380
+GREETING = "Здравствуйте!"
+
+
+def clean(value: object) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def validate_text(text: str) -> list[str]:
+    """Что не так с готовым текстом. Пустой список — можно отправлять."""
+    value = clean(text)
+    errors: list[str] = []
+    if not value:
+        return ["пустой текст"]
+    if not CYRILLIC_RE.search(value):
+        errors.append("не по-русски")
+    if len(value) > MAX_LENGTH:
+        errors.append(f"длиннее {MAX_LENGTH} символов ({len(value)})")
+    if not value.startswith(GREETING):
+        errors.append("нет нейтрального приветствия")
+    if BRAND_RE.search(value):
+        errors.append("названо имя бренда")
+    if LINK_RE.search(value):
+        errors.append("ссылка или username")
+    if not VALUE_RE.search(value):
+        errors.append("не сказано, что мы делаем")
+    if LONG_DASH_RE.search(value):
+        errors.append("длинное тире")
+    if EMOJI_RE.search(value):
+        errors.append("эмодзи")
+    if OPEN_WORD_RE.search(value):
+        errors.append("слово «открытые» про источники")
+    if not MESSENGER_RE.search(value):
+        errors.append("не названы мессенджеры")
+    if not SOCIAL_NETWORK_RE.search(value):
+        errors.append("не названы социальные сети")
+    if value.count("?") != 1:
+        errors.append(f"вопросительных знаков {value.count('?')}, нужен один")
+    if not value.rstrip().endswith("?"):
+        errors.append("текст не заканчивается вопросом")
+    if SINGULAR_RE.search(value):
+        errors.append("первое лицо единственного числа")
+    return errors
+
+
+def prompt_rows(contacts: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """Вход модели: сообщение человека и где оно было сказано."""
+    rows = []
+    for contact in contacts:
+        primary = contact["primary_signal"]
+        rows.append({
+            "row_id": clean(contact.get("row_id")),
+            "primary_signal": {
+                "category": clean(primary.get("category_code")),
+                "message_text": clean(primary.get("message_text")),
+                "chat_title": clean(primary.get("source_title")),
+                "published_at": clean(primary.get("published_at")),
+            },
+            "additional_signals": [
+                {
+                    "category": clean(item.get("category_code")),
+                    "message_text": clean(item.get("message_text")),
+                    "chat_title": clean(item.get("source_title")),
+                }
+                for item in (contact.get("signals") or [])[1:]
+            ],
+        })
+    return rows
+
+
+def output_schema() -> dict:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "drafts": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "row_id": {"type": "string"},
+                        "ok": {"type": "boolean"},
+                        "final_text": {"type": "string", "maxLength": 700},
+                        "need_reference": {"type": "string", "maxLength": 300},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "risk_level": {"type": "string",
+                                       "enum": ["high", "low", "medium"]},
+                        "reason": {"type": "string", "maxLength": 400},
+                    },
+                    "required": ["row_id", "ok", "final_text", "need_reference",
+                                 "confidence", "risk_level", "reason"],
+                },
+            }
+        },
+        "required": ["drafts"],
+    }
+
+
+def build_prompt(contacts: Sequence[Mapping[str, Any]]) -> str:
+    """Промпт перенесён дословно: он выверен на живой переписке."""
+    return "\n".join([
+        "Ты готовишь простые первые личные сообщения для TG RADAR Outreach.",
+        "Это локальный preparation-only этап: ничего не отправляй, не запускай "
+        "инструменты и не используй внешние знания.",
+        "Для каждого row_id напиши один самостоятельный first-touch на русском "
+        "языке, опираясь только на сохраненное публичное сообщение человека.",
+        "Пиши так, как обычный человек пишет в Telegram, без делового и "
+        "рекламного языка.",
+        "Базовая схема: `Здравствуйте! Увидели ваше сообщение в чате про ... "
+        "У нас есть сервис, который находит в мессенджерах и социальных сетях "
+        "сообщения людей, которым нужны ... Если хотите, можем бесплатно "
+        "показать, как он работает. Интересно?`.",
+        "Первую фразу после приветствия начинай через командное `увидели` или "
+        "`заметили`. Одной короткой фразы про ситуацию достаточно: не "
+        "пересказывай исходное сообщение и не перечисляй все его детали.",
+        "Второй фразой обязательно объясни сервис через формулировку `находит "
+        "в мессенджерах и социальных сетях сообщения людей, которым нужны ...` "
+        "и подставь подходящую конкретику из потребности человека. Можно "
+        "добавить, что сервис собирает такие сообщения в одном месте.",
+        "Третьей фразой легко предложи бесплатно показать сервис. Заверши "
+        "коротким человеческим вопросом. Можно повторять эту простую структуру "
+        "между строками: естественность важнее искусственного разнообразия.",
+        "Не используй слова и обороты `открытый` / `открытые`, `публичный`, "
+        "`релевантный`, `смысловой`, `сигнал`, `инструмент`, `система`, "
+        "`мониторинг`, `тематика`, `потребность`, `подход`, `отбор`, "
+        "`применительно к задаче`, `продемонстрировать`, `в связи с вашим "
+        "сообщением`, `пишу по вашему сообщению`.",
+        "Не описывай охват только через Telegram или Telegram-чаты: в каждом "
+        "тексте должны присутствовать и мессенджеры, и социальные сети / соцсети.",
+        "Не используй имя адресата, пол автора или отправителя, название "
+        "TG RADAR/ТГ РАДАР, ссылки, username, эмодзи, Markdown, длинные тире, "
+        "цены, цифры, кейсы, гарантии, обещания лидов или продаж.",
+        "Пиши от команды во множественном числе: `увидели`, `можем`, `покажем`. "
+        "Не используй `я`, `могу`, `покажу`, `увидел` или `увидела`.",
+        "Не говори `нашли вас в базе`. Не притворяйся, что отвечаешь в том же чате.",
+        "Если человек ищет подрядчика, руководителя маркетинга или директолога, "
+        "не притворяйся таким специалистом: скажи просто, что сервис может дать "
+        "еще один способ находить обращения.",
+        "Если человек просит трафик, честно скажи, что мы не продаем трафик, но "
+        "можем показать другой способ находить обращения через сообщения в "
+        "мессенджерах и социальных сетях. Если автор передает чужой лид, "
+        "предложи находить похожие запросы регулярно.",
+        "Если речь про потерю или качество заявок, не обещай CRM, колл-центр "
+        "или очистку заявок: скажи, что сервис находит подходящие сообщения в "
+        "мессенджерах и социальных сетях и собирает их в одном месте.",
+        "Текст должен быть полностью на русском, обычно 3-4 коротких предложения "
+        "и не более 380 символов. В тексте должен быть ровно один вопросительный "
+        "знак в самом конце.",
+        "need_reference кратко фиксирует, к какой потребности привязан текст. "
+        "reason объясняет выбор формулировки. confidence >= 0.8 и risk_level=low "
+        "допустимы только для готового безопасного текста.",
+        "Верни ровно один JSON object по OUTPUT_SCHEMA и по одному draft на "
+        "каждый row_id.",
+        "",
+        "OUTPUT_SCHEMA:",
+        json.dumps(output_schema(), ensure_ascii=False, indent=2),
+        "",
+        "CONTACTS:",
+        json.dumps(prompt_rows(contacts), ensure_ascii=False, indent=2),
+    ])
+
+
+def accept(draft: Mapping[str, Any]) -> tuple[bool, list[str]]:
+    """Годится ли черновик к отправке без человека.
+
+    Мало пройти проверки текста: модель сама сообщает, насколько уверена. Ниже
+    0.8 или risk_level не low — это её же признание, что письмо стоит
+    перечитать, и мы ему верим.
+    """
+    problems = validate_text(str(draft.get("final_text") or ""))
+    if not draft.get("ok"):
+        problems.append("модель пометила черновик негодным")
+    try:
+        confidence = float(draft.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence < 0.8:
+        problems.append(f"уверенность {confidence:.2f} ниже 0.8")
+    if str(draft.get("risk_level") or "") != "low":
+        problems.append(f"риск {draft.get('risk_level')}")
+    if not clean(draft.get("need_reference")):
+        problems.append("не указано, к какой потребности привязан текст")
+    return (not problems), problems
+
+
+def parse_payload(raw: str) -> dict[str, dict]:
+    """Разобрать ответ модели в черновики по row_id."""
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?|```$", "", text).strip()
+    payload = json.loads(text)
+    drafts = payload.get("drafts")
+    if not isinstance(drafts, list):
+        raise ValueError("в ответе нет массива drafts")
+    out: dict[str, dict] = {}
+    for item in drafts:
+        if isinstance(item, dict) and clean(item.get("row_id")):
+            out[clean(item["row_id"])] = item
+    return out

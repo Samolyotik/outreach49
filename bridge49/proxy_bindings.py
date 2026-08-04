@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 
+@dataclass(frozen=True)
 class ProxyBinding:
     account_id: str
     host: str
