@@ -353,16 +353,30 @@
       "recommended_for_presales": true,
       "tags": ["crm", "црм", "1с", "amo", "битрикс", "erp"]
     },
-    "sector_notes/legal_bankruptcy.md": {
-      "topic": ["sector_fit", "legal_bankruptcy"],
+    "sector_notes/bankruptcy_debt_relief.md": {
+      "topic": ["sector_fit", "bankruptcy_debt_relief"],
       "intent": ["faq_question", "positive"],
       "audience": "customer_llm",
       "risk": "high",
-      "source_url": "repo:knowledge_base/sector_notes/legal_bankruptcy.md",
-      "updated_at": "2026-07-09",
+      "source_url": "repo:knowledge_base/sector_notes/bankruptcy_debt_relief.md",
+      "updated_at": "2026-08-04",
       "priority": 74,
       "recommended_for_presales": true,
-      "tags": ["банкротство", "юрист", "долги", "право"]
+      "tags": ["банкротство", "списание долгов", "долги", "просрочки",
+               "кредиторы", "процедура банкротства", "юрист по банкротству"]
+    },
+    "sector_notes/legal_services_business_private.md": {
+      "topic": ["sector_fit", "legal_services_business_private"],
+      "intent": ["faq_question", "positive"],
+      "audience": "customer_llm",
+      "risk": "high",
+      "source_url":
+        "repo:knowledge_base/sector_notes/legal_services_business_private.md",
+      "updated_at": "2026-08-04",
+      "priority": 74,
+      "recommended_for_presales": true,
+      "tags": ["юрист", "право", "договор", "судебный спор",
+               "юридическое сопровождение", "корпоративное право"]
     },
     "sector_notes/medicine.md": {
       "topic": ["sector_fit", "medicine"],

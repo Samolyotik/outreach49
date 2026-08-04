@@ -136,3 +136,49 @@ class KnowledgeRetrievalTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SectorNoteRoutingTests(unittest.TestCase):
+    """Банкротство и общие юруслуги — две сферы с двумя тестовыми группами.
+
+    Проверяется одно свойство: по запросу человека нужная заметка обязана
+    попасть в контекст модели. Верхняя строка выдачи намеренно НЕ проверяется —
+    это не она решает. Обе заметки несут границу с соседней, поэтому даже когда
+    первой поднимается соседняя, правило приоритета едет вместе с ней; гнаться
+    же за top-1 значит крутить BM25 под список фраз, а не под смысл.
+    """
+
+    KB = Path(__file__).resolve().parents[1] / "knowledge_base"
+    BANKRUPTCY = "sector_notes/bankruptcy_debt_relief.md"
+    LEGAL = "sector_notes/legal_services_business_private.md"
+
+    def scope(self):
+        return sorted("sector_notes/" + path.name
+                      for path in (self.KB / "sector_notes").glob("*.md"))
+
+    def retrieved(self, query: str) -> set[str]:
+        chunks = retrieve_knowledge_chunks(
+            self.scope(), query, kb_root=str(self.KB), limit=3)
+        return {chunk.source for chunk in chunks}
+
+    def test_bankruptcy_requests_reach_the_bankruptcy_note(self):
+        for query in ("Нужен юрист по банкротству",
+                      "Помощь со списанием долгов",
+                      "Юрист по списанию долгов",
+                      "Юридическое сопровождение процедуры банкротства"):
+            with self.subTest(query):
+                self.assertIn(self.BANKRUPTCY, self.retrieved(query))
+
+    def test_plain_legal_requests_reach_the_legal_note(self):
+        for query in ("Нужен юрист для проверки договора",
+                      "Ищу юридическое сопровождение бизнеса",
+                      "Нужна консультация по судебному спору"):
+            with self.subTest(query):
+                self.assertIn(self.LEGAL, self.retrieved(query))
+
+    def test_mixed_interest_brings_both_notes(self):
+        """Смешанный запрос — тот самый случай, где модель обязана спросить.
+        Спросить она сможет, только увидев оба направления сразу."""
+        found = self.retrieved("Интересны и общие юруслуги, и банкротство")
+        self.assertIn(self.BANKRUPTCY, found)
+        self.assertIn(self.LEGAL, found)

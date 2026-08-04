@@ -106,7 +106,8 @@
         "v1:sector_notes/real_estate_repair.md",
         "v1:sector_notes/tourism_visas.md",
         "v1:sector_notes/crm_1c.md",
-        "v1:sector_notes/legal_bankruptcy.md",
+        "v1:sector_notes/bankruptcy_debt_relief.md",
+        "v1:sector_notes/legal_services_business_private.md",
         "v1:sector_notes/medicine.md",
         "v1:service_scenarios.md"
       ]
@@ -249,7 +250,8 @@
         "v1:answer_packs/legal_sensitive_pack.md",
         "v1:answer_cards/legal_sensitive.md",
         "v1:sector_notes/tourism_visas.md",
-        "v1:sector_notes/legal_bankruptcy.md",
+        "v1:sector_notes/bankruptcy_debt_relief.md",
+        "v1:sector_notes/legal_services_business_private.md",
         "v1:sector_notes/medicine.md",
         "v1:allowed_claims.md",
         "v1:forbidden_claims.md",

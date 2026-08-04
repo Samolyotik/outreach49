@@ -530,6 +530,47 @@ def consent_from_decision(decision: Mapping[str, Any]) -> bool:
     return kind == CONSENT_HANDOFF_KIND
 
 
+#: Явно названная специализация и общая сфера, в которую её нельзя свести.
+#:
+#: Банкротство и общие юридические услуги — две сферы с двумя разными тестовыми
+#: группами. Слова «юрист», «юридическая помощь», «юридическая компания»
+#: называют профессию исполнителя, а не специализацию, поэтому «юрист по
+#: банкротству» — это банкротство. Модель об этом знает из заметок базы знаний;
+#: здесь стоит второй, детерминированный слой на случай, когда она всё же
+#: выберет общую сферу.
+#:
+#: Гейт односторонний и умеет только запрещать. Сам он сферу не выбирает: без
+#: явных слов не срабатывает вовсе, а сработав — уводит разговор менеджеру, а
+#: не подменяет выбор модели своим. Обратной проверки нет намеренно: сферу
+#: могли подтвердить ходом раньше, и текущее сообщение о ней молчит.
+_SPECIALIZATION_GUARDS: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (
+        re.compile(
+            r"банкрот"
+            r"|спис\w*\s+(?:кредитн\w+\s+)?долг"
+            r"|долг\w*\s+спис",
+            re.IGNORECASE,
+        ),
+        "legal_services_business_private",
+        "bankruptcy_debt_relief",
+    ),
+)
+
+
+def contradicts_named_specialization(text: str, route_sector_id: str) -> str:
+    """Причина отказа, если человек назвал специализацию, а сфера выбрана общая.
+
+    Пустая строка — противоречия нет.
+    """
+    message = str(text or "")
+    if not message.strip():
+        return ""
+    for pattern, general_id, special_id in _SPECIALIZATION_GUARDS:
+        if route_sector_id == general_id and pattern.search(message):
+            return f"названа специализация {special_id}, а сфера выбрана {general_id}"
+    return ""
+
+
 def record_consent(
     store: Store,
     *,
@@ -552,6 +593,14 @@ def record_consent(
     try:
         profile = config.route_for(sector_id)
     except BranchInactive:
+        return None
+
+    contradiction = contradicts_named_specialization(
+        inbound.get("text"), profile.outreach_sector_id
+    )
+    if contradiction:
+        store.log("autoreply", "invite.sector_contradiction",
+                  str(inbound.get("id") or ""), contradiction)
         return None
 
     channel = source_channel_for_role(account_role)

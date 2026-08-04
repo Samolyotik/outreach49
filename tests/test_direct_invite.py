@@ -198,6 +198,159 @@ class ProductionConfigTests(unittest.TestCase):
                     self.assertIn(LINK, text)
 
 
+class LegalVersusBankruptcyTests(unittest.TestCase):
+    """Банкротство и общие юруслуги ведут в две разные тестовые группы.
+
+    Сценарии заданы стороной StartBot 04.08. Выбор сферы делает модель, поэтому
+    здесь проверяется не её суждение, а что решение доезжает до нужной группы и
+    что явное противоречие останавливает выдачу. Само суждение — отдельный
+    прогон по живой модели, он в наборе не живёт.
+    """
+
+    PATH = ProductionConfigTests.PATH
+    BANKRUPTCY = "bankruptcy_debt_relief"
+    LEGAL = "legal_services_business_private"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.store = Store(self.dir / "b.sqlite")
+        self.branch = direct_invite.BranchConfig.from_path(self.PATH)
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, segment, created_at, "
+            "updated_at) VALUES('c1','user','someone','default',?,?)",
+            (now(), now()))
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "created_at, updated_at) "
+            "VALUES('th1',821,'@someone','c1','private_dm',?,?)", (now(), now()))
+        self.store.commit()
+        self.thread = dict(self.store.one("SELECT * FROM threads WHERE id='th1'"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def record(self, text: str, sector_id: str, inbound_id: str = "5001"):
+        row = direct_invite.record_consent(
+            self.store, config=self.branch, thread=self.thread,
+            inbound={"id": inbound_id, "account_id": 821, "text": text},
+            account_role="dm_sender", sector_id=sector_id)
+        self.store.commit()
+        return row
+
+    def test_lawyer_for_bankruptcy_goes_to_the_bankruptcy_group(self):
+        row = self.record("Нужен юрист по банкротству", self.BANKRUPTCY)
+        self.assertEqual(row["test_group_profile_id"],
+                         "bankruptcy_debt_relief_test_group")
+
+    def test_debt_relief_goes_to_the_bankruptcy_group(self):
+        row = self.record("Помощь со списанием долгов", self.BANKRUPTCY)
+        self.assertEqual(row["test_group_profile_id"],
+                         "bankruptcy_debt_relief_test_group")
+
+    def test_contract_review_goes_to_the_legal_group(self):
+        row = self.record("Нужна проверка договора юристом", self.LEGAL)
+        self.assertEqual(row["test_group_profile_id"],
+                         "legal_services_business_private_test_group")
+
+    def test_named_specialization_is_not_swallowed_by_the_general_sector(self):
+        """Второй слой: человек назвал банкротство, а сфера выбрана общая.
+
+        Выдать тут ссылку — значит увести человека в чужую тестовую группу, и
+        отозвать доступ потом придётся руками. Поэтому разговор идёт менеджеру.
+        """
+        for text in ("Нужен юрист по банкротству",
+                     "Юрист по списанию долгов",
+                     "Юридическое сопровождение процедуры банкротства",
+                     "Помогите списать долги"):
+            with self.subTest(text):
+                self.assertIsNone(self.record(text, self.LEGAL))
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM direct_invites")["n"], 0)
+
+    def test_plain_legal_requests_are_not_blocked(self):
+        """Гейт умеет только запрещать и без явных слов молчит."""
+        for n, text in enumerate((
+                "Нужен юрист для проверки договора",
+                "Ищу юридическое сопровождение бизнеса",
+                "Нужна консультация по судебному спору")):
+            with self.subTest(text):
+                self.assertEqual(
+                    direct_invite.contradicts_named_specialization(text, self.LEGAL),
+                    "")
+        row = self.record("Ищу юридическое сопровождение бизнеса", self.LEGAL)
+        self.assertIsNotNone(row)
+
+    def test_guard_never_touches_other_sectors(self):
+        """Слово «банкротство» в чужой сфере — не повод её запрещать."""
+        self.assertEqual(
+            direct_invite.contradicts_named_specialization(
+                "Возим авто, был случай банкротства поставщика",
+                "auto_import_dealers"),
+            "")
+
+    def test_mixed_interest_issues_nothing_until_the_person_chooses(self):
+        """Смешанный запрос: модель обязана вернуть пустую сферу и спросить.
+
+        Пустая сфера сюда доезжает как «маршрута нет» — ни заявки, ни группы.
+        """
+        self.assertIsNone(self.record(
+            "Интересны и общие юруслуги, и банкротство", ""))
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM direct_invites")["n"], 0)
+
+    def test_after_the_person_chooses_only_that_group_is_issued(self):
+        """Уточнили — выдаём ровно выбранное, и ровно один раз."""
+        row = self.record("Давайте банкротство", self.BANKRUPTCY, inbound_id="5002")
+        self.assertEqual(row["test_group_profile_id"],
+                         "bankruptcy_debt_relief_test_group")
+        # Вторая ссылка тому же человеку не выдаётся даже под другую сферу.
+        self.assertIsNone(self.record("А ещё договоры", self.LEGAL,
+                                      inbound_id="5003"))
+        groups = [r["test_group_profile_id"] for r in self.store.query(
+            "SELECT test_group_profile_id FROM direct_invites")]
+        self.assertEqual(groups, ["bankruptcy_debt_relief_test_group"])
+
+
+class KnowledgeSplitTests(unittest.TestCase):
+    """Заметки базы знаний разделены и каждая несёт границу с соседней."""
+
+    KB = Path(__file__).resolve().parents[1] / "knowledge_base"
+
+    def test_the_combined_note_is_gone(self):
+        self.assertFalse((self.KB / "sector_notes/legal_bankruptcy.md").exists())
+
+    def test_both_notes_exist_and_carry_the_boundary(self):
+        for name in ("bankruptcy_debt_relief", "legal_services_business_private"):
+            with self.subTest(name):
+                text = (self.KB / f"sector_notes/{name}.md").read_text(
+                    encoding="utf-8")
+                self.assertIn("Граница", text)
+                # Правило приоритета обязано ехать с любой из двух заметок:
+                # какая из них найдётся по запросу, заранее неизвестно.
+                self.assertIn("специализаци", text)
+                self.assertIn("уточняющий вопрос", text)
+
+    def test_manifest_describes_both_notes_with_distinct_tags(self):
+        manifest = json.loads((self.KB / "kb_manifest.json").read_text(
+            encoding="utf-8"))
+        sources = manifest["sources"]
+        self.assertNotIn("sector_notes/legal_bankruptcy.md", sources)
+        bankruptcy = sources["sector_notes/bankruptcy_debt_relief.md"]["tags"]
+        legal = sources["sector_notes/legal_services_business_private.md"]["tags"]
+        self.assertIn("банкротство", bankruptcy)
+        self.assertNotIn("банкротство", legal)
+        self.assertTrue(set(bankruptcy) - set(legal))
+
+    def test_no_reference_points_at_the_removed_note(self):
+        for name in ("customer_truth_sources_v2.json",
+                     "customer_truth_runtime_v2.json", "kb_manifest.json"):
+            with self.subTest(name):
+                self.assertNotIn("legal_bankruptcy",
+                                 (self.KB / name).read_text(encoding="utf-8"))
+
+
 class DecisionReadingTests(unittest.TestCase):
     def test_consent_only_for_free_test_access(self):
         self.assertTrue(direct_invite.consent_from_decision(
