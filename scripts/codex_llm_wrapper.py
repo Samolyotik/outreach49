@@ -68,7 +68,7 @@ def main() -> int:
         return 0
 
     prompt = build_codex_prompt(payload)
-    result, run_metadata = run_codex(prompt)
+    result, run_metadata = run_codex(prompt, source_payload=payload)
     write_usage_log(payload, prompt, result, run_metadata)
     print_json(result)
     return 0
@@ -142,12 +142,15 @@ def build_codex_prompt(payload: Dict[str, Any]) -> str:
     )
 
 
-def run_codex(prompt: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def run_codex(prompt: str, *, source_payload: Optional[Dict[str, Any]] = None
+              ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     codex_bin = os.environ.get("CODEX_LLM_CODEX_BIN", "codex")
     timeout_seconds = parse_timeout(os.environ.get("CODEX_LLM_TIMEOUT_SECONDS"), default=180.0)
     workdir = Path(os.environ.get("CODEX_LLM_WORKDIR", str(ROOT))).resolve()
     model = resolve_model()
-    prompt_payload = extract_prompt_payload(prompt) or {}
+    # У plain-промпта нет INPUT_JSON внутри текста, поэтому исходный
+    # payload передаётся отдельно, а не вылавливается обратно из промпта.
+    prompt_payload = source_payload or extract_prompt_payload(prompt) or {}
     reasoning_effort = resolve_reasoning_effort(prompt_payload=prompt_payload)
     metadata: Dict[str, Any] = {
         "codex_bin": codex_bin,
@@ -319,6 +322,12 @@ def run_codex(prompt: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 )
             metadata["error"] = ""
             metadata["last_error_class"] = ""
+            # Свой промпт — свой ответ. Нормализатор приводит что угодно к
+            # presales-форме (`decision`, `reply_text`, `ok`), и для задачи с
+            # другой схемой это не приведение, а потеря: разбор классификации
+            # доезжал сюда целым и выходил пустым каркасом.
+            if is_plain_prompt_payload(prompt_payload):
+                return finish(parsed)
             return finish(normalize_contract_response(parsed, prompt_payload))
     return finish(
         error_response_for_payload(
