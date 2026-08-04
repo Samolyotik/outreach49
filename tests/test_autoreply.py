@@ -950,3 +950,139 @@ class ConsentChannelTests(unittest.TestCase):
                 role = self.role_for(account_id, surface)
                 self.assertEqual(
                     direct_invite.source_channel_for_role(role), surface)
+
+
+class OneLetterTests(unittest.TestCase):
+    """Согласие на тест закрывается одним письмом, а не двумя.
+
+    Раньше уходило «принято, ссылка придёт отдельно», и только через 5–7 минут
+    сама ссылка: столько ждёт поаккаунтный темп Radar между двумя видимыми
+    действиями. Пауза не убирается ничем, кроме отказа от второго действия.
+
+    Если выпустить ссылку не удалось — старый путь обязан остаться целым:
+    человек всё равно получает ответ, а ссылку довозит отдельный проход.
+    """
+
+    BRANCH = {
+        "schema_version": 1, "enabled": True,
+        "active_sector_ids": ["auto_import_dealers"],
+        "validity_days": 7, "max_attempts": 5,
+        "sector_profiles": {"auto_import_dealers": {
+            "outreach_sector_id": "auto_import_dealers",
+            "sector_id": "cars_abroad",
+            "sector_name": "Авто из-за границы",
+            "test_group_profile_id": "cars_abroad_test_group"}},
+    }
+    LINK = "https://t.me/tgradar_start_bot?start=opaque12"
+
+    def setUp(self):
+        from bridge49 import direct_invite
+        self.di = direct_invite
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        path = tmp / "branch.json"
+        path.write_text(json.dumps(self.BRANCH), encoding="utf-8")
+        self.branch = direct_invite.BranchConfig.from_path(path)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        contact = entities.add_contact(
+            self.store, username="someone", segment="inbound", actor="test")
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (self.thread_id, contact["id"], now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(5001,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            ("Да, давайте тест. Пригоняем авто из Кореи.", now(), now()))
+        self.store.commit()
+        self.inbound = dict(self.store.one("SELECT * FROM inbound WHERE id=5001"))
+        self._real_issue = direct_invite.issue_inline
+
+    def tearDown(self):
+        self.di.issue_inline = self._real_issue
+        self.store.close()
+        self.tmp.cleanup()
+
+    def consent(self):
+        return verdict("reply_and_handoff",
+                       reply_text="Принято, ссылка придёт отдельно.",
+                       handoff_kind="free_test_access",
+                       matched_direct_invite_sector_id="auto_import_dealers")
+
+    def letters(self):
+        return [json.loads(r["params"])["text"] for r in self.store.query(
+            "SELECT params FROM tasks ORDER BY created_at, id")]
+
+    def run_apply(self):
+        return autoreply.apply(self.store, self.inbound, self.consent(),
+                               branch_config=self.branch)
+
+    # -- удачный выпуск ---------------------------------------------------
+
+    def test_a_single_letter_carries_the_link(self):
+        real = self.di.issue_inline
+        def issued(store, request_id, **kw):
+            out = real(store, request_id, config=self.branch,
+                       client=_FakeStartBot(self.LINK))
+            return out
+        self.di.issue_inline = issued
+        result = self.run_apply()
+
+        letters = self.letters()
+        self.assertEqual(len(letters), 1, f"писем должно быть одно: {letters}")
+        self.assertIn(self.LINK, letters[0])
+        self.assertNotIn("придёт отдельно", letters[0])
+        self.assertTrue(result["invite"])
+        self.assertTrue(result["invite_inline"])
+
+    def test_the_issued_link_knows_its_letter(self):
+        """Без привязки заявка навсегда «выпущена», и `reconcile` её не закроет."""
+        real = self.di.issue_inline
+        self.di.issue_inline = lambda s, r, **kw: real(
+            s, r, config=self.branch, client=_FakeStartBot(self.LINK))
+        result = self.run_apply()
+        row = self.store.one(
+            "SELECT status, task_id FROM direct_invites WHERE request_id = ?",
+            (result["invite"],))
+        self.assertEqual(row["status"], self.di.STATUS_CREATED)
+        self.assertEqual(row["task_id"], result["task"])
+
+    # -- фолбек -----------------------------------------------------------
+
+    def test_a_failed_issue_keeps_the_promise_letter(self):
+        self.di.issue_inline = lambda *a, **kw: None
+        result = self.run_apply()
+        letters = self.letters()
+        self.assertEqual(len(letters), 1)
+        self.assertIn("придёт отдельно", letters[0])
+        self.assertTrue(result["invite"], "согласие обязано остаться записанным")
+        self.assertEqual(result["invite_inline"], "")
+
+    def test_the_request_stays_in_the_queue_after_a_failed_issue(self):
+        self.di.issue_inline = lambda *a, **kw: None
+        result = self.run_apply()
+        row = self.store.one(
+            "SELECT status FROM direct_invites WHERE request_id = ?",
+            (result["invite"],))
+        self.assertEqual(row["status"], self.di.STATUS_AGREED)
+        self.assertEqual(len(self.di.pending_requests(self.store)), 1)
+
+
+class _FakeStartBot:
+    """Подмена транспорта StartBot: сеть в тестах не трогаем."""
+
+    def __init__(self, link: str) -> None:
+        self.link = link
+
+    def create_direct_invite(self, **kwargs):
+        from bridge49 import direct_invite
+        profile = kwargs["profile"]
+        return direct_invite.CreatedInvite(
+            invite_id="fti_outreach_test", deep_link=self.link,
+            expires_at=now(), replayed=False,
+            ready_message=direct_invite.render_invite_message(
+                profile.sector_name, self.link))

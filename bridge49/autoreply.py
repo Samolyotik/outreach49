@@ -393,6 +393,9 @@ def apply(
         # Заявка на автовыдачу. Непустая означает, что человек получит ссылку
         # сам и менеджер ему не нужен.
         "invite": "",
+        # Ссылка выпущена прямо здесь и уедет этим же письмом. Пусто — значит
+        # письмо обещает её отдельно, а выпуск подберёт свой проход.
+        "invite_inline": "",
     }
 
     remember_discovery(store, thread, decision.get("collected_fields_update") or {})
@@ -444,6 +447,17 @@ def apply(
         )
         if recorded is not None:
             result["invite"] = str(recorded["request_id"])
+            # Ссылку выпускаем прямо здесь, чтобы она уехала этим же письмом.
+            # Не вышло — `issued` пустой, и всё идёт прежним путём: ответ
+            # движка обещает ссылку отдельно, а выпуск подберёт свой проход.
+            issued = direct_invite.issue_inline(
+                store, str(recorded["request_id"]),
+                config=branch_config or direct_invite.BranchConfig.from_env(),
+                actor=actor,
+            )
+            if issued:
+                reply_text = str(issued["text"])
+                result["invite_inline"] = issued["invite_row_id"]
             # Сферу, которую движок сопоставил с каталогом, запоминаем в
             # нормализованном виде. Со следующего хода она приходит уже как
             # известная из маршрута, и движку не приходится сопоставлять её
@@ -470,23 +484,42 @@ def apply(
         reason = review_mark(decision)
         if verdict == "knowledge_gap":
             reason = "; ".join(filter(None, [reason, "нехватка знаний"]))
-        queued = replies.queue_reply(
-            store,
-            text=reply_text,
-            thread_id=thread["id"],
-            campaign_id=replies.ensure_reply_campaign(
+        try:
+            queued = replies.queue_reply(
                 store,
-                replies.AUTO_CAMPAIGN_ID,
-                replies.AUTO_CAMPAIGN_NAME,
-                "служебная: автоответы на входящие",
-            ),
-            review_reason=reason or None,
-            scheduled_at=scheduled_at,
-            actor=actor,
-        )
+                text=reply_text,
+                thread_id=thread["id"],
+                campaign_id=replies.ensure_reply_campaign(
+                    store,
+                    replies.AUTO_CAMPAIGN_ID,
+                    replies.AUTO_CAMPAIGN_NAME,
+                    "служебная: автоответы на входящие",
+                ),
+                review_reason=reason or None,
+                scheduled_at=scheduled_at,
+                actor=actor,
+            )
+        except Exception:
+            # Ссылка уже выпущена, но письма с ней не будет. Возвращаем заявку
+            # в очередь, иначе она осталась бы «выпущенной» без доставки —
+            # человек согласился, ссылка существует, и никто её не везёт.
+            if result.get("invite_inline"):
+                direct_invite.release_inline(
+                    store, str(result["invite_inline"]),
+                    "ответ не поставлен в очередь", actor=actor)
+            raise
         result["task"] = queued["task"]
         result["sent_text"] = reply_text
         result["review_reason"] = reason
+        if result.get("invite_inline"):
+            direct_invite.attach_delivery(
+                store, str(result["invite_inline"]), str(queued["task"]),
+                actor=actor)
+    elif result.get("invite_inline"):
+        # Письма не будет вовсе — вернём ссылку отдельному проходу.
+        direct_invite.release_inline(
+            store, str(result["invite_inline"]),
+            "ответ не отправляется на этом ходу", actor=actor)
 
     store.log(actor, f"autoreply.{verdict}", thread["id"],
               f"задача={result['task'] or '—'} карточка={result['handoff'] or '—'} "

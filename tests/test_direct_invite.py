@@ -676,6 +676,165 @@ class StartBotConfigTests(unittest.TestCase):
         ).validate()
 
 
+class InlineIssueTests(unittest.TestCase):
+    """Ссылка уезжает тем же письмом, а не вторым.
+
+    Раньше человек получал два сообщения: «принято, ссылка придёт отдельно» и
+    через 5–7 минут саму ссылку. Пауза не наша — это поаккаунтный темп Radar
+    между двумя видимыми действиями, и убрать её можно только одним способом:
+    не делать второго действия.
+
+    Ошибиться тут дороже, чем кажется. Выпуск идёт до постановки письма, и
+    любой обрыв между ними оставляет ссылку выпущенной, но никем не везомой.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.store = Store(self.dir / "b.sqlite")
+        self.branch = direct_invite.BranchConfig.from_path(write_config(self.dir))
+        self.store.execute(
+            "INSERT INTO accounts(id, label, role, roles, enabled, synced_at) "
+            "VALUES(821,'acc','dm_sender','[\"dm_sender\"]',1,?)", (now(),))
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, segment, created_at, "
+            "updated_at) VALUES('c1','user','someone','default',?,?)",
+            (now(), now()))
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "created_at, updated_at) "
+            "VALUES('th1',821,'@someone','c1','private_dm',?,?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, contact_id, created_at) "
+            "VALUES(5001,821,'private_dm','@someone','someone',?,?,'{}','c1',?)",
+            ("давайте тест", now(), now()))
+        self.store.commit()
+        thread = dict(self.store.one("SELECT * FROM threads WHERE id='th1'"))
+        recorded = direct_invite.record_consent(
+            self.store, config=self.branch, thread=thread,
+            inbound={"id": "5001", "account_id": 821},
+            account_role="dm_sender", sector_id="auto_import_dealers")
+        self.store.commit()
+        self.request_id = str(recorded["request_id"])
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def row(self):
+        return dict(self.store.one(
+            "SELECT * FROM direct_invites WHERE request_id = ?",
+            (self.request_id,)))
+
+    def make_task(self, task_id: str) -> str:
+        """Настоящая строка задачи: у `direct_invites.task_id` внешний ключ."""
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, created_at, updated_at) "
+            "VALUES('direct_invites','выдача','reply_private_dm',?,?) "
+            "ON CONFLICT(id) DO NOTHING", (now(), now()))
+        self.store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, state, created_at, updated_at) "
+            "VALUES(?,'direct_invites','c1',821,'reply_private_dm','{}',"
+            "'immediate',?,'planned',?,?)", (task_id, now(), now(), now()))
+        self.store.commit()
+        return task_id
+
+    def issue(self, client=None):
+        return direct_invite.issue_inline(
+            self.store, self.request_id, config=self.branch,
+            client=client or FakeClient())
+
+    def test_the_letter_carries_the_link(self):
+        issued = self.issue()
+        self.assertIsNotNone(issued)
+        self.assertIn(LINK, issued["text"])
+        self.assertIn("Авто из-за границы", issued["text"])
+        low = issued["text"].lower()
+        self.assertTrue(any(m in low for m in ("одноразов", "один раз")),
+                        "письмо не предупредило про одноразовость")
+
+    def test_the_request_is_closed_before_the_letter_is_queued(self):
+        """Иначе проход по таймеру подхватит ту же заявку и выпустит доставку
+        второй раз — человек получит два письма со ссылкой."""
+        self.issue()
+        self.assertEqual(self.row()["status"], direct_invite.STATUS_CREATED)
+        self.assertEqual(direct_invite.pending_requests(self.store), [])
+
+    def test_the_timer_pass_adds_no_second_letter(self):
+        issued = self.issue()
+        direct_invite.attach_delivery(
+            self.store, issued["invite_row_id"], self.make_task("task_1"))
+        client = FakeClient()
+        result = direct_invite.process_requests(
+            self.store, None, config=self.branch, client=client)
+        self.assertEqual(result["выпущено"], 0)
+        self.assertEqual(client.calls, [], "ссылка выпущена второй раз")
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM tasks")["n"], 1,
+            "проход по таймеру поставил второе письмо")
+
+    def test_the_delivering_task_is_remembered(self):
+        issued = self.issue()
+        direct_invite.attach_delivery(
+            self.store, issued["invite_row_id"], self.make_task("task_7"))
+        self.assertEqual(self.row()["task_id"], "task_7")
+
+    # -- фолбек ----------------------------------------------------------
+
+    def test_a_failed_issue_keeps_the_old_two_step_path(self):
+        """Ссылку выпустить не вышло — человек всё равно получает ответ, а
+        заявка остаётся в очереди и уедет отдельным письмом, как раньше."""
+        self.assertIsNone(self.issue(FakeClient(fail=True)))
+        row = self.row()
+        self.assertEqual(row["status"], direct_invite.STATUS_AGREED)
+        self.assertEqual(int(row["attempt_count"]), 1)
+        self.assertIsNotNone(row["next_attempt_at"])
+
+    def test_the_fallback_still_delivers_later(self):
+        self.issue(FakeClient(fail=True))
+        self.store.execute(
+            "UPDATE direct_invites SET next_attempt_at = NULL WHERE request_id = ?",
+            (self.request_id,))
+        self.store.commit()
+        result = direct_invite.process_requests(
+            self.store, None, config=self.branch, client=FakeClient())
+        self.assertEqual(result["выпущено"], 1)
+        self.assertEqual(self.row()["status"], direct_invite.STATUS_CREATED)
+        task = self.store.one("SELECT params FROM tasks LIMIT 1")
+        self.assertIn(LINK, task["params"])
+
+    def test_a_disabled_branch_issues_nothing_inline(self):
+        off = direct_invite.BranchConfig.from_path(
+            write_config(self.dir, enabled=False, active_sector_ids=[]))
+        self.assertIsNone(direct_invite.issue_inline(
+            self.store, self.request_id, config=off, client=FakeClient()))
+
+    def test_an_unqueued_letter_returns_the_request_to_the_queue(self):
+        """Ссылка выпущена, письма нет. Заявка обязана вернуться в очередь:
+        иначе она навсегда «выпущена», и никто её не везёт."""
+        issued = self.issue()
+        direct_invite.release_inline(
+            self.store, issued["invite_row_id"], "очередь отказала")
+        row = self.row()
+        self.assertEqual(row["status"], direct_invite.STATUS_AGREED)
+        self.assertIn("письмо не поставлено", row["last_error"])
+        self.assertEqual(len(direct_invite.pending_requests(self.store)), 1)
+
+    def test_the_repeated_issue_returns_the_same_link(self):
+        """Повторный выпуск после возврата в очередь обязан отдать ту же
+        ссылку: `request_id` детерминирован, второй доступ человеку не нужен."""
+        issued = self.issue()
+        direct_invite.release_inline(
+            self.store, issued["invite_row_id"], "очередь отказала")
+        client = FakeClient()
+        direct_invite.process_requests(
+            self.store, None, config=self.branch, client=client)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0]["request_id"], self.request_id)
+
+
 class FakeClient:
     """Подмена транспорта. Сеть в тестах не трогаем."""
 

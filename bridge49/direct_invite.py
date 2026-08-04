@@ -685,6 +685,159 @@ def pending_requests(store: Store, *, limit: int = 10,
     return [dict(row) for row in rows]
 
 
+def mint(
+    store: Store,
+    row: Mapping[str, Any],
+    *,
+    branch: BranchConfig,
+    client: "StartBotClient",
+    actor: str = "invites",
+) -> "CreatedInvite | None":
+    """Выпустить ссылку по одному согласию. None — не вышло.
+
+    Учёт попыток, откладывание и вызов человека на исчерпании живут здесь, в
+    одном месте: выпуск зовут теперь двое — разбор входящих, чтобы отправить
+    ссылку тем же сообщением, и отдельный проход, который подбирает всё, что
+    у разбора не получилось. Две копии политики повторов разъехались бы.
+    """
+    request_id = str(row["request_id"])
+    try:
+        profile = branch.route_for(str(row["outreach_sector_id"]))
+        if (profile.sector_name != str(row["sector_name"])
+                or profile.test_group_profile_id
+                != str(row["test_group_profile_id"])):
+            # Конфиг переписали между согласием и выпуском. Выдавать доступ
+            # по разъехавшемуся профилю нельзя — это другой тест.
+            raise DirectInviteError("профиль сферы разъехался с конфигом")
+
+        contact = store.one(
+            "SELECT username, display_name FROM contacts WHERE id = ?",
+            (row["contact_id"],),
+        )
+        display_name = None
+        if contact is not None:
+            display_name = (contact["display_name"] or contact["username"]
+                            or None)
+
+        return client.create_direct_invite(
+            request_id=request_id,
+            source_channel=str(row["source_channel"]),
+            source_conversation_id=str(row["thread_id"]),
+            consent_recorded_at=_parse(str(row["consent_recorded_at"])),
+            profile=profile,
+            display_name=str(display_name) if display_name else None,
+            validity_days=branch.validity_days,
+        )
+    except DirectInviteError as exc:
+        attempts = int(row["attempt_count"] or 0) + 1
+        exhausted = attempts >= branch.max_attempts
+        store.execute(
+            "UPDATE direct_invites SET attempt_count = ?, next_attempt_at = ?, "
+            "last_error = ?, status = ?, updated_at = ? WHERE id = ?",
+            (
+                attempts,
+                None if exhausted else _later(RETRY_BACKOFF_MINUTES * attempts),
+                str(exc)[:300],
+                STATUS_CREATE_FAILED if exhausted else STATUS_AGREED,
+                now(),
+                row["id"],
+            ),
+        )
+        store.log(actor, "invite.create_failed", request_id,
+                  f"попытка {attempts}: {str(exc)[:180]}")
+        if exhausted:
+            # Карточку заводим только здесь, на исчерпании: пока попытки
+            # остались, звать человека рано — ссылка ещё может уйти сама.
+            fallback_to_manager(store, row, str(exc), actor=actor)
+        store.commit()
+        return None
+
+
+def issue_inline(
+    store: Store,
+    request_id: str,
+    *,
+    config: BranchConfig | None = None,
+    client: "StartBotClient | None" = None,
+    actor: str = "autoreply",
+) -> dict[str, Any] | None:
+    """Выпустить ссылку прямо в разборе, чтобы отправить её одним сообщением.
+
+    Иначе человек получает два: сначала «принято, ссылка придёт отдельно», и
+    только через 5–7 минут саму ссылку — столько ждёт поаккаунтный темп Radar
+    между двумя видимыми действиями. Одно письмо со ссылкой читается лучше.
+
+    Возвращает `{"text", "invite_row_id"}` либо None. None — это не поломка, а
+    команда идти прежним путём: ответ движка уходит как есть, а ссылку позже
+    подберёт отдельный проход. Поэтому здесь не бросаем исключений: недоступный
+    StartBot не должен оставлять человека вообще без ответа.
+
+    Заявка сразу помечается выпущенной, ещё до постановки задачи: иначе её
+    успел бы подхватить проход по таймеру и выпустить доставку второй раз.
+    Привязать задачу обязан вызывающий — `attach_delivery` или `release`.
+    """
+    branch = config if config is not None else BranchConfig.from_env()
+    if not branch.enabled:
+        return None
+    row = store.one(
+        "SELECT * FROM direct_invites WHERE request_id = ? AND status = ?",
+        (str(request_id), STATUS_AGREED),
+    )
+    if row is None:
+        return None
+    row = dict(row)
+    if client is None:
+        try:
+            client = StartBotClient(StartBotConfig.from_env())
+        except DirectInviteError as exc:
+            store.log(actor, "invite.client_unavailable", str(request_id),
+                      str(exc)[:200])
+            store.commit()
+            return None
+    invite = mint(store, row, branch=branch, client=client, actor=actor)
+    if invite is None:
+        return None
+    store.execute(
+        "UPDATE direct_invites SET invite_id = ?, invite_expires_at = ?, "
+        "status = ?, attempt_count = attempt_count + 1, next_attempt_at = NULL, "
+        "last_error = NULL, updated_at = ? WHERE id = ?",
+        (invite.invite_id, invite.expires_at, STATUS_CREATED, now(), row["id"]),
+    )
+    store.commit()
+    return {"text": invite.ready_message, "invite_row_id": str(row["id"]),
+            "request_id": request_id, "replayed": invite.replayed}
+
+
+def attach_delivery(store: Store, invite_row_id: str, task_id: str,
+                    *, actor: str = "autoreply") -> None:
+    """Связать выпущенную ссылку с задачей, которая её везёт."""
+    store.execute(
+        "UPDATE direct_invites SET task_id = ?, updated_at = ? WHERE id = ?",
+        (str(task_id), now(), str(invite_row_id)),
+    )
+    store.log(actor, "invite.created", str(invite_row_id),
+              f"задача={task_id} одним сообщением")
+    store.commit()
+
+
+def release_inline(store: Store, invite_row_id: str, why: str,
+                   *, actor: str = "autoreply") -> None:
+    """Вернуть заявку в очередь, если отправить письмо так и не вышло.
+
+    Ссылка уже выпущена и в StartBot существует, но никто её не везёт. Статус
+    возвращаем в «согласие есть», чтобы её подобрал проход по таймеру: выпуск
+    идемпотентен по `request_id` и вернёт ту же ссылку, а не вторую.
+    """
+    store.execute(
+        "UPDATE direct_invites SET status = ?, last_error = ?, updated_at = ? "
+        "WHERE id = ?",
+        (STATUS_AGREED, f"письмо не поставлено: {why}"[:300], now(),
+         str(invite_row_id)),
+    )
+    store.log(actor, "invite.inline_released", str(invite_row_id), why[:200])
+    store.commit()
+
+
 def process_requests(
     store: Store,
     settings,
@@ -723,56 +876,9 @@ def process_requests(
     created = failed = 0
     for row in rows:
         request_id = str(row["request_id"])
-        try:
-            profile = branch.route_for(str(row["outreach_sector_id"]))
-            if (profile.sector_name != str(row["sector_name"])
-                    or profile.test_group_profile_id
-                    != str(row["test_group_profile_id"])):
-                # Конфиг переписали между согласием и выпуском. Выдавать доступ
-                # по разъехавшемуся профилю нельзя — это другой тест.
-                raise DirectInviteError("профиль сферы разъехался с конфигом")
-
-            contact = store.one(
-                "SELECT username, display_name FROM contacts WHERE id = ?",
-                (row["contact_id"],),
-            )
-            display_name = None
-            if contact is not None:
-                display_name = (contact["display_name"] or contact["username"]
-                                or None)
-
-            invite = client.create_direct_invite(
-                request_id=request_id,
-                source_channel=str(row["source_channel"]),
-                source_conversation_id=str(row["thread_id"]),
-                consent_recorded_at=_parse(str(row["consent_recorded_at"])),
-                profile=profile,
-                display_name=str(display_name) if display_name else None,
-                validity_days=branch.validity_days,
-            )
-        except DirectInviteError as exc:
+        invite = mint(store, row, branch=branch, client=client, actor=actor)
+        if invite is None:
             failed += 1
-            attempts = int(row["attempt_count"] or 0) + 1
-            exhausted = attempts >= branch.max_attempts
-            store.execute(
-                "UPDATE direct_invites SET attempt_count = ?, next_attempt_at = ?, "
-                "last_error = ?, status = ?, updated_at = ? WHERE id = ?",
-                (
-                    attempts,
-                    None if exhausted else _later(RETRY_BACKOFF_MINUTES * attempts),
-                    str(exc)[:300],
-                    STATUS_CREATE_FAILED if exhausted else STATUS_AGREED,
-                    now(),
-                    row["id"],
-                ),
-            )
-            store.log(actor, "invite.create_failed", request_id,
-                      f"попытка {attempts}: {str(exc)[:180]}")
-            if exhausted:
-                # Карточку заводим только здесь, на исчерпании: пока попытки
-                # остались, звать человека рано — ссылка ещё может уйти сама.
-                fallback_to_manager(store, row, str(exc), actor=actor)
-            store.commit()
             continue
 
         # Ссылка на руках. Ставим доставку обычной задачей — дальше её выпустит
