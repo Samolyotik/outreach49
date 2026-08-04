@@ -34,6 +34,11 @@ from .store import Store, dumps, new_id, now
 #: ответ в личку канала обязан отличаться от рассылки в неё же.
 REPLY_ACTIONS = frozenset({"reply_private_dm", "reply_channel_dm"})
 
+#: Статус заявки «ссылка выпущена, доставка ещё не подтверждена». Держим
+#: строкой, а не импортом: `direct_invite` импортирует `replies`, и обратный
+#: импорт замкнул бы круг.
+INVITE_STATUS_CREATED = "invite_created_delivery_pending"
+
 #: Служебная кампания для ручных ответов. Задача не может существовать без
 #: кампании, а заводить сегмент ради одного адресата бессмысленно.
 REPLY_CAMPAIGN_ID = "manual_replies"
@@ -417,8 +422,14 @@ def supersede_pending_reply(store: Store, pending: Any, *,
         return False
     if pending["request_id"] or pending["command_id"]:
         return False
+    # Второе условие — не дубль первого. Ссылка помечается выпущенной ДО
+    # постановки письма, и между этими двумя коммитами `task_id` ещё пуст:
+    # проверка по задаче в этот момент письма не узнаёт.
     carries_invite = store.one(
-        "SELECT 1 FROM direct_invites WHERE task_id = ?", (pending["id"],))
+        "SELECT 1 FROM direct_invites "
+        " WHERE task_id = ? OR (contact_id = ? AND status = ? AND task_id IS NULL)",
+        (pending["id"], pending["contact_id"], INVITE_STATUS_CREATED),
+    )
     if carries_invite is not None:
         return False
     cursor = store.execute(
@@ -481,7 +492,7 @@ def queue_reply(
     campaign_id = ensure_reply_campaign(store) if campaign_id is None else campaign_id
 
     pending = store.one(
-        "SELECT id, state, request_id, command_id FROM tasks "
+        "SELECT id, state, request_id, command_id, contact_id FROM tasks "
         " WHERE campaign_id = ? AND contact_id = ? "
         "   AND state IN ('planned', 'queued') ORDER BY created_at DESC, id DESC",
         (campaign_id, contact_id),

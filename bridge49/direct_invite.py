@@ -685,6 +685,41 @@ def pending_requests(store: Store, *, limit: int = 10,
     return [dict(row) for row in rows]
 
 
+def rescue_orphans(store: Store, *, actor: str = "invites") -> int:
+    """Вернуть в очередь заявки, у которых ссылка есть, а везти её некому.
+
+    Между «пометили выпущенной» и «привязали письмо» лежат два отдельных
+    коммита, и падение процесса между ними оставляет заявку в тупике: она уже
+    не `test_agreed`, значит её не подберёт `pending_requests`, но и `task_id`
+    у неё пуст, значит её не закроет `reconcile_deliveries`. Человек согласился,
+    ссылка выпущена, и о ней никто больше не вспомнит. Сюда же попадает письмо,
+    отменённое заменой, — на случай, если защита в `supersede_pending_reply`
+    когда-нибудь разъедется с этим кодом.
+
+    Возврат безопасен: выпуск идемпотентен по `request_id` и отдаст ту же
+    ссылку, а не вторую.
+    """
+    rows = store.query(
+        "SELECT d.id, d.request_id FROM direct_invites d "
+        "LEFT JOIN tasks t ON t.id = d.task_id "
+        " WHERE d.status = ? "
+        "   AND (d.task_id IS NULL OR t.id IS NULL OR t.state = 'cancelled')",
+        (STATUS_CREATED,),
+    )
+    for row in rows:
+        store.execute(
+            "UPDATE direct_invites SET status = ?, task_id = NULL, "
+            "last_error = ?, updated_at = ? WHERE id = ?",
+            (STATUS_AGREED, "письма не оказалось — заявка возвращена в очередь",
+             now(), row["id"]),
+        )
+        store.log(actor, "invite.rescued", str(row["request_id"]),
+                  "ссылка выпущена, письма нет")
+    if rows:
+        store.commit()
+    return len(rows)
+
+
 def mint(
     store: Store,
     row: Mapping[str, Any],
@@ -857,9 +892,11 @@ def process_requests(
         return {"состояние": "выключено", "выпущено": 0, "ошибок": 0,
                 "разобрано": 0}
 
+    rescued = rescue_orphans(store, actor=actor)
     rows = pending_requests(store, limit=limit)
     if not rows:
-        return {"состояние": "пусто", "выпущено": 0, "ошибок": 0, "разобрано": 0}
+        return {"состояние": "пусто", "выпущено": 0, "ошибок": 0,
+                "разобрано": 0, "спасено": rescued}
 
     if client is None:
         try:
@@ -919,7 +956,7 @@ def process_requests(
         created += 1
 
     return {"состояние": "работа", "разобрано": len(rows), "выпущено": created,
-            "ошибок": failed}
+            "ошибок": failed, "спасено": rescued}
 
 
 def fallback_to_manager(store: Store, row: Mapping[str, Any], why: str,

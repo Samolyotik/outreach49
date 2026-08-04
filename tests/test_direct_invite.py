@@ -859,3 +859,100 @@ class FakeClient:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrphanRescueTests(unittest.TestCase):
+    """Заявка, у которой ссылка есть, а везти её некому.
+
+    «Пометили выпущенной» и «привязали письмо» — два отдельных коммита.
+    Падение между ними оставляет заявку в тупике: `pending_requests` её уже не
+    видит (статус не `test_agreed`), `reconcile_deliveries` тоже (`task_id`
+    пуст). Человек согласился, ссылка выпущена, и о ней никто не вспомнит.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.store = Store(self.dir / "b.sqlite")
+        self.branch = direct_invite.BranchConfig.from_path(write_config(self.dir))
+        self.store.execute(
+            "INSERT INTO accounts(id, label, role, roles, enabled, synced_at) "
+            "VALUES(821,'acc','dm_sender','[\"dm_sender\"]',1,?)", (now(),))
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, segment, created_at, "
+            "updated_at) VALUES('c1','user','someone','default',?,?)",
+            (now(), now()))
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "created_at, updated_at) "
+            "VALUES('th1',821,'@someone','c1','private_dm',?,?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, contact_id, created_at) "
+            "VALUES(5001,821,'private_dm','@someone','someone',?,?,'{}','c1',?)",
+            ("давайте тест", now(), now()))
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add(self, invite_id: str, *, task_id: str | None):
+        self.store.execute(
+            "INSERT INTO direct_invites(id, request_id, thread_id, contact_id, "
+            "account_id, inbound_id, source_channel, outreach_sector_id, "
+            "sector_id, sector_name, test_group_profile_id, "
+            "consent_recorded_at, consent_source, status, attempt_count, "
+            "task_id, created_at, updated_at) "
+            "VALUES(?,?, 'th1','c1',821,'5001','private_dm','auto_import_dealers',"
+            "'cars_abroad','Авто из-за границы','cars_abroad_test_group',?,"
+            "'presales_v2',?,1,?,?,?)",
+            (invite_id, f"dfi_{invite_id}", now(), direct_invite.STATUS_CREATED,
+             task_id, now(), now()))
+        self.store.commit()
+
+    def status(self, invite_id: str) -> str:
+        return self.store.one(
+            "SELECT status FROM direct_invites WHERE id = ?", (invite_id,))["status"]
+
+    def test_an_invite_without_a_letter_returns_to_the_queue(self):
+        self.add("d1", task_id=None)
+        self.assertEqual(direct_invite.rescue_orphans(self.store), 1)
+        self.assertEqual(self.status("d1"), direct_invite.STATUS_AGREED)
+        self.assertEqual(len(direct_invite.pending_requests(self.store)), 1)
+
+    def test_a_cancelled_letter_also_returns_the_invite(self):
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, created_at, updated_at) "
+            "VALUES('autoreplies','а','reply_private_dm',?,?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, state, created_at, updated_at) "
+            "VALUES('t1','autoreplies','c1',821,'reply_private_dm','{}',"
+            "'immediate',?,'cancelled',?,?)", (now(), now(), now()))
+        self.store.commit()
+        self.add("d1", task_id="t1")
+        self.assertEqual(direct_invite.rescue_orphans(self.store), 1)
+        self.assertEqual(self.status("d1"), direct_invite.STATUS_AGREED)
+
+    def test_a_live_letter_is_left_alone(self):
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, created_at, updated_at) "
+            "VALUES('autoreplies','а','reply_private_dm',?,?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, state, created_at, updated_at) "
+            "VALUES('t1','autoreplies','c1',821,'reply_private_dm','{}',"
+            "'immediate',?,'planned',?,?)", (now(), now(), now()))
+        self.store.commit()
+        self.add("d1", task_id="t1")
+        self.assertEqual(direct_invite.rescue_orphans(self.store), 0)
+        self.assertEqual(self.status("d1"), direct_invite.STATUS_CREATED)
+
+    def test_the_rescue_runs_inside_the_normal_pass(self):
+        self.add("d1", task_id=None)
+        result = direct_invite.process_requests(
+            self.store, None, config=self.branch, client=FakeClient())
+        self.assertEqual(result["спасено"], 1)
+        self.assertEqual(result["выпущено"], 1, "спасённая заявка не уехала")
+        self.assertEqual(self.status("d1"), direct_invite.STATUS_CREATED)

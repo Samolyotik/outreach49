@@ -1203,6 +1203,28 @@ class FollowUpMessageTests(unittest.TestCase):
             self.second(supersede=True)
         self.assertEqual(self.state(self.first), "planned")
 
+    def test_the_invite_letter_is_protected_before_it_is_linked(self):
+        """Ссылка помечается выпущенной ДО постановки письма, и между этими
+        коммитами `task_id` ещё пуст. Проверка по задаче письма не узнаёт, а
+        замена отменила бы ровно то, ради чего человек и писал."""
+        from bridge49 import direct_invite
+        self.store.execute(
+            "INSERT INTO direct_invites(id, request_id, thread_id, contact_id, "
+            "account_id, inbound_id, source_channel, outreach_sector_id, "
+            "sector_id, sector_name, test_group_profile_id, "
+            "consent_recorded_at, consent_source, status, attempt_count, "
+            "created_at, updated_at) "
+            "VALUES('d2','dfi_2',?,?,821,'5001','private_dm','auto_import_dealers',"
+            "'cars_abroad','Авто из-за границы','cars_abroad_test_group',?,"
+            "'presales_v2',?,1,?,?)",
+            (self.thread_id, self.contact_id, now(),
+             direct_invite.STATUS_CREATED, now(), now()))
+        self.store.commit()
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError):
+            self.second(supersede=True)
+        self.assertEqual(self.state(self.first), "planned")
+
     def test_manual_replies_still_refuse(self):
         """У человека отказ информативен: он должен знать, что ответ уже ждёт."""
         self.add_inbound(5002, "ещё уточнение")
