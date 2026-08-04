@@ -234,13 +234,28 @@ def build_context(
         (thread["id"],),
     )
 
-    # Автовыдача бесплатного теста. Движок обязан знать две вещи: точный список
-    # сфер, которым доступ можно выдать без менеджера, и работает ли ветка для
-    # уже выясненной сферы этого собеседника. Без них он всегда выбирает ручной
-    # путь — не потому что так решил, а потому что не видит альтернативы.
+    # Автовыдача бесплатного теста. Движок обязан знать две вещи, и они разные.
+    #
+    # Каталог — исчерпывающий список сфер, которым доступ выдаётся без
+    # менеджера. По нему движок сам сопоставляет сферу, подтверждённую
+    # человеком в переписке.
+    #
+    # Ветка — сфера, известная нам заранее, из маршрута: откуда человек к нам
+    # пришёл. Промпт принимает любое из двух («branch=automatic ЛИБО сфера
+    # совпала с элементом каталога»), но путать их нельзя. Свободный текст из
+    # разговора сюда не годится: сфера там записана словами человека, а не
+    # идентификатором, и совпадения не будет никогда — ключ молча вырождается
+    # в «менеджер». Поэтому читаем только нормализованные имена, как читал их
+    # прежний контур.
     branch = branch_config or direct_invite.BranchConfig.from_env()
-    sector = str(discovery_context(thread).get("sector") or "")
-    branch_context = branch.context_for_sector(sector) if sector else None
+    known = discovery_context(thread)
+    branch_context = None
+    for key in ("direct_invite_sector_id", "sector_id"):
+        candidate = str(known.get(key) or "").strip()
+        if candidate:
+            branch_context = branch.context_for_sector(candidate)
+            if branch_context is not None:
+                break
 
     return {
         "provider_id": PROVIDER_ID,
@@ -395,6 +410,14 @@ def apply(
         )
         if recorded is not None:
             result["invite"] = str(recorded["request_id"])
+            # Сферу, которую движок сопоставил с каталогом, запоминаем в
+            # нормализованном виде. Со следующего хода она приходит уже как
+            # известная из маршрута, и движку не приходится сопоставлять её
+            # заново по свободному тексту — а значит, и ошибаться заново.
+            remember_discovery(
+                store, thread,
+                {"direct_invite_sector_id": str(recorded["outreach_sector_id"])},
+            )
 
     if verdict in HANDOFF_DECISIONS and not result["invite"]:
         note = str(decision.get("knowledge_gap") or decision.get("reason") or "")
