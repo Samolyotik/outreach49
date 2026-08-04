@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
-from bridge49 import catalog, config  # noqa: E402
+from bridge49 import catalog, config, direct_invite  # noqa: E402
 from bridge49.store import Store  # noqa: E402
 
 #: Сколько сообщений одному аккаунту в сутки. Меньше обычного потолка: это
@@ -96,6 +97,23 @@ def _target(item: dict, *, allow_tg_id: bool = False) -> tuple[str, dict, str]:
     raise ValueError("нечем адресовать: нет ни канала, ни username, ни tg_id")
 
 
+#: Ссылка запуска и название сферы внутри перевыпущенного текста. Читаем их,
+#: а не пересобираем: сфера и ссылка — факты чужого выпуска, и подставлять
+#: вместо них свои догадки нельзя.
+_DEEP_LINK_RE = re.compile(r"https://t\.me/\S+\?start=\S+")
+_SECTOR_RE = re.compile(r"по направлению «([^»]+)»")
+
+
+def _deep_link(text: str) -> str:
+    match = _DEEP_LINK_RE.search(text or "")
+    return match.group(0).rstrip(".,);") if match else ""
+
+
+def _sector_name(text: str) -> str:
+    match = _SECTOR_RE.search(text or "")
+    return match.group(1).strip() if match else ""
+
+
 def _text(item: dict, links: dict[str, dict]) -> str:
     """Текст сообщения. У приглашений он берётся из перевыпуска.
 
@@ -107,6 +125,14 @@ def _text(item: dict, links: dict[str, dict]) -> str:
     if item.get("kind") == "startbot_invite":
         if link is None or not link.get("text"):
             raise ValueError("приглашение без перевыпущенной ссылки")
+        # Текст перевыпуска один на всех: шесть приглашений, ушедших 04.08 с
+        # трёх аккаунтов, совпали байт в байт, кроме самой ссылки. Собираем
+        # заново своим сборщиком — факты те же, формулировки у каждого свои.
+        # Ссылку и название сферы берём из перевыпуска, а не выдумываем.
+        deep_link = _deep_link(str(link["text"]))
+        sector = _sector_name(str(link["text"]))
+        if deep_link and sector:
+            return direct_invite.render_invite_message(sector, deep_link)
         return str(link["text"])
     text = item.get("override_text")
     if not text:

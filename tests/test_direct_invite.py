@@ -349,10 +349,67 @@ class MessageRenderingTests(unittest.TestCase):
         text = direct_invite.render_invite_message("Авто из-за границы", LINK)
         self.assertIn(LINK, text)
         self.assertIn("Авто из-за границы", text)
-        # Без этих двух предупреждений человек открывает ссылку не с того
-        # аккаунта, и тест достаётся не ему.
-        self.assertIn("одноразовая", text)
-        self.assertIn("первым Telegram-аккаунтом", text)
+
+    def test_every_combination_keeps_the_facts(self):
+        """Формулировки разные, факты одни.
+
+        Перебираем все сочетания абзацев, а не выборку: вариант, потерявший
+        предупреждение об одноразовости, встретится не в тестах, а у человека,
+        который откроет ссылку не с того аккаунта.
+        """
+        from itertools import product
+
+        combos = product(
+            direct_invite._OPENINGS, direct_invite._LINK_LINES,
+            direct_invite._ONE_TIME, direct_invite._INSIDE,
+            direct_invite._CLOSINGS,
+        )
+        checked = 0
+        for opening, link_line, one_time, inside, closing in combos:
+            text = "\n\n".join((
+                opening.format(sector="Авто из-за границы"),
+                link_line.format(link=LINK), one_time, inside, closing,
+            ))
+            checked += 1
+            self.assertIn(LINK, text)
+            self.assertIn("Авто из-за границы", text)
+            for group in direct_invite._ONE_TIME_MARKERS:
+                self.assertTrue(
+                    any(marker in one_time.lower() for marker in group),
+                    f"потеряно предупреждение {group}: {one_time[:60]}",
+                )
+            # Стиль ответов: без длинного тире и эмодзи.
+            self.assertNotIn("—", text)
+        self.assertEqual(checked, 4 * 4 * 4 * 3 * 3)
+
+    def test_different_recipients_get_different_text(self):
+        """Иначе одинаковый текст с нескольких аккаунтов выдаёт рассылку."""
+        import re
+
+        links = [
+            f"https://t.me/tgradar_start_bot?start=opaque{n:04d}"
+            for n in range(60)
+        ]
+        skeletons = {
+            re.sub(r"https://t\.me/\S+", "<ссылка>",
+                   direct_invite.render_invite_message("Авто из-за границы", link))
+            for link in links
+        }
+        # 576 сочетаний на 60 получателей: совпадения возможны, но текст не
+        # должен быть один на всех.
+        self.assertGreater(len(skeletons), 20, "разнообразия почти нет")
+
+    def test_same_recipient_gets_stable_text(self):
+        """Повторный выпуск не должен переписывать уже собранное письмо."""
+        first = direct_invite.render_invite_message("Авто из-за границы", LINK)
+        second = direct_invite.render_invite_message("Авто из-за границы", LINK)
+        self.assertEqual(first, second)
+
+    def test_seed_overrides_the_link(self):
+        by_link = direct_invite.render_invite_message("Сфера", LINK)
+        by_seed = direct_invite.render_invite_message("Сфера", LINK, seed="другое")
+        self.assertIn(LINK, by_seed)
+        self.assertNotEqual(by_link, by_seed)
 
     def test_invalid_link_is_refused(self):
         for bad in ("", "https://example.com/x", "https://t.me/bot"):
