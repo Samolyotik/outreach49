@@ -295,6 +295,32 @@ class ProcessingTests(unittest.TestCase):
         row = dict(self.store.one("SELECT * FROM direct_invites"))
         self.assertEqual(row["status"], direct_invite.STATUS_CREATE_FAILED)
 
+    def test_exhausted_attempts_call_a_human(self):
+        """Иначе автоматика хуже ручного пути: ни ссылки, ни менеджера.
+
+        Записав согласие, ветка перестаёт заводить карточку. Если после этого
+        ссылку выпустить не удалось, единственный, кто ещё может спасти
+        разговор, — человек. И узнать он должен сам, а не из отчёта.
+        """
+        client = FakeClient(fail=True)
+        for _ in range(self.branch.max_attempts):
+            self.store.execute(
+                "UPDATE direct_invites SET next_attempt_at = NULL")
+            self.store.commit()
+            direct_invite.process_requests(
+                self.store, None, config=self.branch, client=client, limit=5)
+        card = self.store.one(
+            "SELECT * FROM handoffs WHERE thread_id = 'th1' AND status = 'new'")
+        self.assertIsNotNone(card)
+        self.assertEqual(card["reason"], "free_test_access_failed")
+
+    def test_human_is_not_called_while_attempts_remain(self):
+        """Пока попытки есть, звать человека рано — ссылка ещё может уйти."""
+        direct_invite.process_requests(
+            self.store, None, config=self.branch,
+            client=FakeClient(fail=True), limit=5)
+        self.assertIsNone(self.store.one("SELECT * FROM handoffs"))
+
     def test_disabled_branch_issues_nothing(self):
         result = direct_invite.process_requests(
             self.store, None, config=direct_invite.BranchConfig.disabled(),

@@ -648,6 +648,10 @@ def process_requests(
             )
             store.log(actor, "invite.create_failed", request_id,
                       f"попытка {attempts}: {str(exc)[:180]}")
+            if exhausted:
+                # Карточку заводим только здесь, на исчерпании: пока попытки
+                # остались, звать человека рано — ссылка ещё может уйти сама.
+                fallback_to_manager(store, row, str(exc), actor=actor)
             store.commit()
             continue
 
@@ -690,6 +694,40 @@ def process_requests(
 
     return {"состояние": "работа", "разобрано": len(rows), "выпущено": created,
             "ошибок": failed}
+
+
+def fallback_to_manager(store: Store, row: Mapping[str, Any], why: str,
+                        *, actor: str = "invites") -> str:
+    """Исчерпали попытки — зовём человека.
+
+    Без этого автоматика была бы хуже ручного пути, а не лучше: записав
+    согласие, она перестаёт заводить карточку, и если ссылку выпустить не
+    удалось, собеседник остаётся и без ссылки, и без менеджера. Тихо, потому что
+    формально «всё по плану».
+
+    Карточка — тот же механизм, что и у обычного handoff: одна активная на
+    диалог, дальше её разбирает человек.
+    """
+    existing = store.one(
+        "SELECT id FROM handoffs WHERE thread_id = ? AND status IN ('new','taken')",
+        (row["thread_id"],),
+    )
+    if existing is not None:
+        return str(existing["id"])
+    handoff_id = new_id("handoff")
+    store.execute(
+        "INSERT INTO handoffs(id, thread_id, reason, status, note, "
+        "created_at, updated_at) VALUES(?,?,?,'new',?,?,?)",
+        (handoff_id, row["thread_id"], "free_test_access_failed",
+         f"автовыдача не удалась: {why}"[:300], now(), now()),
+    )
+    store.execute(
+        "UPDATE threads SET state = 'handoff', updated_at = ? WHERE id = ?",
+        (now(), row["thread_id"]),
+    )
+    store.log(actor, "invite.fallback_manager", str(row["request_id"]),
+              why[:200])
+    return handoff_id
 
 
 def reconcile_deliveries(store: Store, *, actor: str = "invites") -> dict[str, int]:
