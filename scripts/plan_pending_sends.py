@@ -26,7 +26,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -126,11 +128,27 @@ def plan(
     limits = settings.limits
     tz = _tz(settings.timezone)
     interval = timedelta(seconds=int(limits.per_account_visible_interval_sec))
+    account_jitter = max(0, int(limits.per_account_visible_jitter_sec or 0))
+    fleet_min = max(0, int(limits.global_visible_interval_min_sec or 0))
+    fleet_max = max(fleet_min, int(limits.global_visible_interval_max_sec or 0))
+
+    # Разброс детерминированный: зерно из состава очереди, а не из часов. Один
+    # и тот же вход даёт один и тот же план, иначе повторный прогон рисовал бы
+    # другие времена и спорить с планом было бы не о чем.
+    seed = hashlib.sha256(
+        "|".join(sorted(str(i.get("id")) for i in queue)).encode("utf-8")
+    ).hexdigest()
+    rng = random.Random(seed)
 
     ready: list[dict] = []
     skipped: list[dict] = []
     used: dict[tuple[int, str], int] = {}
     cursor: dict[int, datetime] = {}
+    #: Общий курсор флота. Без него у каждого аккаунта свой отсчёт от одного и
+    #: того же старта, и первое письмо всех отправителей встаёт на одну и ту же
+    #: секунду: три аккаунта пишут разным людям одновременно. Со стороны это
+    #: один залп из одного центра, а не три человека за работой.
+    fleet_next: datetime | None = None
 
     for item in sorted(queue, key=lambda i: str(i.get("created_at") or "")):
         if kinds is not None and item.get("kind") not in kinds:
@@ -160,8 +178,16 @@ def plan(
 
         # Слот. Потолок считается по дню самого слота: у кого накопилось
         # больше нормы, тот пишет несколько дней подряд.
+        #
+        # Нижних границ у слота три, и берётся самая поздняя: начало плана,
+        # пауза этого аккаунта после его прошлого письма и пауза всего флота
+        # после любого прошлого письма. Третья и разводит отправителей во
+        # времени; окно и дневной потолок проверяются ниже уже поверх неё.
         account_id = int(account_id)
-        slot = max(start, cursor.get(account_id, start))
+        floors = [start, cursor.get(account_id, start)]
+        if fleet_next is not None:
+            floors.append(fleet_next)
+        slot = max(floors)
         for _ in range(30):
             local = slot.astimezone(tz)
             if (local.weekday() in limits.send_weekdays
@@ -187,7 +213,13 @@ def plan(
 
         day = slot.astimezone(tz).date().isoformat()
         used[(account_id, day)] = used.get((account_id, day), 0) + 1
-        cursor[account_id] = slot + interval
+        # Разброс только вверх: диспетчер проверяет минимальную паузу на
+        # выпуске, и слот, провалившийся под неё, был бы заблокирован. А ровный
+        # шаг ровно в полчаса сам по себе выглядит машиной — от него и уходим.
+        cursor[account_id] = (
+            slot + interval + timedelta(seconds=rng.randint(0, account_jitter))
+        )
+        fleet_next = slot + timedelta(seconds=rng.randint(fleet_min, fleet_max))
 
         ready.append({
             "источник": item["id"],
