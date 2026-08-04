@@ -41,8 +41,14 @@ import argparse
 import hashlib
 import json
 import sqlite3
+import sys
 from datetime import datetime, timedelta, timezone
+
+
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bridge49 import outreach_texts  # noqa: E402
 
 MSK = timezone(timedelta(hours=3))
 
@@ -180,11 +186,22 @@ def build(db: Path, *, date: str, per_account: int,
                     continue
                 target = pool[cursor]
                 cursor += 1
+                body = (outreach_texts.chat_message(target["username"])
+                        if kind == "chat"
+                        else outreach_texts.channel_dm(target["username"]))
+                problems = outreach_texts.validate(body, kind=kind)
+                if problems:
+                    # Кривой текст не ставим вовсе: письмо в чужой чат
+                    # исправить после отправки нельзя.
+                    left_over.setdefault("отбраковано", 0)
+                    left_over["отбраковано"] += 1
+                    continue
                 slots.append({
                     "вид": kind,
                     "действие": action,
                     "кому": target["username"],
                     "contact_id": target["contact_id"],
+                    "текст": body,
                 })
         left_over[lane] = max(0, len(pool) - cursor)
 
