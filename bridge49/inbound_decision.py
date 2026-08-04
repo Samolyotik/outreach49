@@ -554,6 +554,15 @@ def decide_inbound_reply(
         ),
         "primary_llm_attempts": attempts,
         "handoff_kind": normalized.handoff_kind,
+        # Без этого ключа автовыдача мертва целиком: `sector_from_decision`
+        # читает именно его, пустое значение даёт `BranchInactive`, согласие
+        # не записывается — и человек, которому уже пообещали ссылку, не
+        # получает её никогда. Модель сферу возвращает и возвращала: 04.08 на
+        # ходе @cargo316k_1688 в сыром ответе стояло `logistics_ved_china`,
+        # а до `record_consent` доезжала пустая строка.
+        "matched_direct_invite_sector_id": (
+            normalized.matched_direct_invite_sector_id
+        ),
         "knowledge_gap": normalized.knowledge_gap,
         "next_state": normalized.next_state,
     }

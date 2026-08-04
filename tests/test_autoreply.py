@@ -877,3 +877,76 @@ class StaleInboundGateTests(unittest.TestCase):
         self.assertEqual(result["queued"], 0)
         card = self.store.one("SELECT reason FROM handoffs WHERE status = 'new'")
         self.assertEqual(card["reason"], "у входящего нет времени отправки")
+
+
+class ConsentChannelTests(unittest.TestCase):
+    """Канал согласия обязан совпадать с поверхностью разговора.
+
+    Он уезжает в учёт выданных доступов на стороне StartBot, то есть это
+    отчётность, а не подсказка. Раньше бралась «первая роль, которая вообще
+    отображается в канал», а роли лежат в `set` — порядок обхода множества
+    строк зависит от затравки хеша процесса. У аккаунта с ролями
+    `chat_sender` и `dm_sender` канал выпадал монеткой: шесть прогонов подряд
+    на живой базе дали 4×`public_chat` и 2×`private_dm` для разговора, который
+    целиком был личкой.
+    """
+
+    MULTI = [{
+        "id": 862, "label": "multi", "program_code": "TGR1",
+        "runtime_state": "running",
+        "outreach": {
+            "enabled": True, "roles": ["chat_sender", "dm_sender"],
+            "publish_inbound": True, "allow_immediate_visible_actions": True,
+            "allowed_actions": ["reply_private_dm", "send_private_dm"],
+        },
+    }, {
+        "id": 814, "label": "channel", "program_code": "TGR1",
+        "runtime_state": "running",
+        "outreach": {
+            "enabled": True, "roles": ["channel_sender"],
+            "publish_inbound": True, "allow_immediate_visible_actions": True,
+            "allowed_actions": ["send_channel_dm"],
+        },
+    }]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "b.sqlite")
+        accounts_mod.sync(self.store, self.MULTI)
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def role_for(self, account_id: int, surface: str) -> str:
+        return autoreply.account_role_for(
+            self.store, {"account_id": account_id, "surface": surface})
+
+    def test_private_dm_is_attributed_to_the_dm_role(self):
+        self.assertEqual(self.role_for(862, "private_dm"), "dm_sender")
+
+    def test_channel_dm_is_attributed_to_the_channel_role(self):
+        self.assertEqual(self.role_for(814, "channel_dm"), "channel_sender")
+
+    def test_the_answer_does_not_depend_on_the_process(self):
+        """Множество ролей нельзя обходить «как получится»."""
+        seen = {self.role_for(862, "private_dm") for _ in range(50)}
+        self.assertEqual(seen, {"dm_sender"})
+
+    def test_an_account_without_the_matching_role_yields_nothing(self):
+        """Приписать согласию канал, которого не было, хуже, чем не выдать
+        доступ автоматически: `record_consent` тогда откажет и позовёт
+        менеджера."""
+        from bridge49 import direct_invite
+        role = self.role_for(814, "private_dm")
+        self.assertEqual(role, "")
+        self.assertEqual(direct_invite.source_channel_for_role(role), "")
+
+    def test_the_channel_matches_the_surface_for_every_role(self):
+        from bridge49 import direct_invite
+        for account_id, surface in ((862, "private_dm"), (814, "channel_dm")):
+            with self.subTest(surface=surface):
+                role = self.role_for(account_id, surface)
+                self.assertEqual(
+                    direct_invite.source_channel_for_role(role), surface)

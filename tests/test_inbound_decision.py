@@ -159,3 +159,81 @@ class InboundDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DirectInviteSeamTests(unittest.TestCase):
+    """Сфера, сопоставленная моделью, обязана доехать до решения.
+
+    Ключ читает `direct_invite.sector_from_decision`; пустое значение даёт
+    `BranchInactive`, согласие не записывается, ссылка не выпускается — и всё
+    это молча, потому что разговор просто уходит менеджеру. Так автовыдача
+    была мертва с самого переноса: 04.08 модель на ходе @cargo316k_1688
+    вернула `logistics_ved_china`, а до записи согласия доехала пустая строка.
+    """
+
+    def caller(self, sector: str, handoff_kind: str = "free_test_access"):
+        def make(payload, **kwargs):
+            return PresalesV2ExternalResult(
+                raw={
+                    "action": "reply_and_handoff",
+                    "intent": "demo_question",
+                    "reply_text": "Принято, ссылка придёт отдельно.",
+                    "confidence": 0.9,
+                    "risk_level": "low",
+                    "next_state": "free_test_access_pending",
+                    "handoff_reason": "человек согласился на тест",
+                    "handoff_kind": handoff_kind,
+                    "matched_direct_invite_sector_id": sector,
+                    "knowledge_gap": "",
+                    "collected_fields_update": {"sector": "карго из Китая"},
+                    "coverage_complete": True,
+                    "turn_items": [{
+                        "item_id": "1",
+                        "topic": "free_test",
+                        "user_item": "просит показать бесплатный тест",
+                        "user_evidence": "покажите тест",
+                        "status": "action_required",
+                        "answer_summary": "заявка принята, ссылка придёт",
+                        "reply_evidence": "ссылка придёт отдельно",
+                        "source_ids": ["v1:free_test.md"],
+                    }],
+                    "reason": "",
+                },
+                reason="",
+            )
+        return make
+
+    def decide(self, sector: str, **extra):
+        return decide_inbound_reply(
+            context("Мы возим карго из Китая, покажите тест",
+                    direct_invite_sector_catalog=[{
+                        "outreach_sector_id": "logistics_ved_china",
+                        "sector_id": "logistics_ved_china",
+                        "sector_name": "ВЭД, Китай, логистика",
+                    }],
+                    **extra),
+            llm_caller=self.caller(sector),
+        )
+
+    def test_matched_sector_reaches_the_decision(self):
+        decision = self.decide("logistics_ved_china")
+        self.assertEqual(decision["handoff_kind"], "free_test_access")
+        self.assertEqual(decision["matched_direct_invite_sector_id"],
+                         "logistics_ved_china")
+
+    def test_an_unmatched_sector_stays_empty_but_present(self):
+        """Отсутствие ключа неотличимо от «сфера не сопоставлена», и разница
+        видна только тем, что человек не получает обещанную ссылку."""
+        from bridge49 import direct_invite
+        decision = self.decide("")
+        self.assertIn("matched_direct_invite_sector_id", decision)
+        self.assertEqual(decision["matched_direct_invite_sector_id"], "")
+        self.assertEqual(direct_invite.sector_from_decision(decision), "")
+
+    def test_the_branch_would_actually_fire(self):
+        """Сквозная проверка шва: то, что читает автовыдача."""
+        from bridge49 import direct_invite
+        decision = self.decide("logistics_ved_china")
+        self.assertTrue(direct_invite.consent_from_decision(decision))
+        self.assertEqual(direct_invite.sector_from_decision(decision),
+                         "logistics_ved_china")

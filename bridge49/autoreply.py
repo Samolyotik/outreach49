@@ -219,10 +219,19 @@ def discovery_context(thread: dict) -> dict[str, str]:
 def account_role_for(store: Store, inbound: dict) -> str:
     """Роль аккаунта, по которой определяется канал согласия.
 
-    У аккаунта может быть несколько ролей из семейства отправителей, и главная
-    не всегда та, что отвечает в этом диалоге. Берём первую, которая вообще
-    отображается в канал: сервису важно, откуда пришло согласие, и подставлять
-    роль, не относящуюся к переписке, нельзя — она попадёт в учёт доступов.
+    Берём ту роль, чей канал совпадает с поверхностью этого входящего. Раньше
+    бралась «первая, которая вообще отображается в канал», и это было неверно
+    дважды. Во-первых, роли лежат в `set` (`accounts._hydrate`), а порядок
+    обхода множества строк зависит от случайной затравки хеша — то есть от
+    процесса. У аккаунта 862 с ролями `chat_sender` и `dm_sender` канал
+    согласия выпадал монеткой: шесть прогонов подряд дали 4×`public_chat` и
+    2×`private_dm` для разговора, который весь целиком был личкой. Во-вторых,
+    даже детерминированный выбор «первой попавшейся» лгал бы: канал уезжает в
+    учёт выданных доступов на стороне StartBot.
+
+    Если подходящей роли у аккаунта нет, возвращаем пустую строку. Тогда
+    `record_consent` откажет и разговор уйдёт менеджеру — приписать согласию
+    канал, которого не было, хуже, чем не выдать доступ автоматически.
     """
     account = accounts_mod.get(store, int(inbound["account_id"]))
     if account is None:
@@ -233,11 +242,12 @@ def account_role_for(store: Store, inbound: dict) -> str:
             roles = json.loads(roles)
         except (TypeError, ValueError):
             roles = []
-    candidates = [str(r) for r in roles] or [str(account.get("role") or "")]
+    candidates = sorted(str(r) for r in roles) or [str(account.get("role") or "")]
+    surface = str(inbound.get("surface") or "").strip()
     for role in candidates:
-        if direct_invite.source_channel_for_role(role):
+        if direct_invite.source_channel_for_role(role) == surface:
             return role
-    return str(account.get("role") or "")
+    return ""
 
 
 def build_context(
