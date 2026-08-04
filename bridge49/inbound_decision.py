@@ -330,6 +330,15 @@ def _presales_context(
     llm_context["automatic_free_test_sector_catalog"] = list(
         context.get("direct_invite_sector_catalog") or []
     )
+    # Промпт спрашивает у контекста, работает ли автовыдача для этого
+    # собеседника (`free_test_access_branch.branch=automatic`). Ключ обязан
+    # существовать: без него условие в промпте не выполнится никогда, и модель
+    # всегда выберет ручной путь — молча, без всякого признака поломки.
+    branch = context.get("free_test_access_branch")
+    llm_context["free_test_access_branch"] = (
+        dict(branch) if isinstance(branch, Mapping) and branch
+        else {"branch": "manager"}
+    )
     if entry_mode == CHAT_SENDER_PRIVATE_ENTRY_MODE:
         llm_context["quoted_public_chat_request_likely"] = bool(
             context.get("quoted_public_chat_request_likely")

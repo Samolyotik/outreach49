@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -227,6 +227,47 @@ CREATE TABLE IF NOT EXISTS handoffs (
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs(status, created_at);
+
+-- Автовыдача бесплатного теста: согласие → выпуск ссылки → доставка.
+--
+-- Заявка живёт отдельно от задачи доставки, потому что это разные сущности с
+-- разной судьбой: ссылка может быть выпущена, а доставка не поставлена, и
+-- наоборот — задача может уйти в очередь, а сервис ответить повтором. Уникален
+-- request_id: он выводится из (диалог, входящее), поэтому повторный разбор того
+-- же хода не заведёт вторую заявку и не выдаст человеку вторую ссылку.
+CREATE TABLE IF NOT EXISTS direct_invites (
+  id                    TEXT PRIMARY KEY,
+  request_id            TEXT NOT NULL UNIQUE,
+  thread_id             TEXT NOT NULL REFERENCES threads(id),
+  contact_id            TEXT NOT NULL REFERENCES contacts(id),
+  account_id            INTEGER NOT NULL,
+  inbound_id            TEXT NOT NULL,
+  source_channel        TEXT NOT NULL,
+  outreach_sector_id    TEXT NOT NULL,
+  sector_id             TEXT NOT NULL,
+  sector_name           TEXT NOT NULL,
+  test_group_profile_id TEXT NOT NULL,
+  consent_recorded_at   TEXT NOT NULL,
+  consent_source        TEXT NOT NULL,
+  invite_id             TEXT UNIQUE,
+  invite_expires_at     TEXT,
+  task_id               TEXT UNIQUE REFERENCES tasks(id),
+  status                TEXT NOT NULL,
+  attempt_count         INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at       TEXT,
+  last_error            TEXT,
+  link_delivered_at     TEXT,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  CHECK (source_channel IN ('channel_dm', 'private_dm', 'public_chat')),
+  CHECK (status IN ('test_agreed', 'invite_created_delivery_pending',
+                    'link_delivered', 'invite_creation_failed',
+                    'delivery_failed', 'cancelled'))
+);
+CREATE INDEX IF NOT EXISTS idx_direct_invites_status
+  ON direct_invites(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_direct_invites_contact
+  ON direct_invites(contact_id, status);
 
 -- Курсоры чтения из Radar и прочие мелочи.
 CREATE TABLE IF NOT EXISTS state (

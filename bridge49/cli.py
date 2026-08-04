@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import (alerts, autoreply, catalog, config, dispatcher, entities,
-               planner, pollers, replies, report, research, watchdog)
+from . import (alerts, autoreply, catalog, config, direct_invite, dispatcher,
+               entities, planner, pollers, replies, report, research, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -680,6 +680,47 @@ def cmd_autoreply(args) -> int:
     return 0
 
 
+def cmd_invites(args) -> int:
+    """Автовыдача бесплатного теста: что настроено и что уже выдано."""
+    settings = _settings(args)
+    branch = direct_invite.BranchConfig.from_env()
+
+    with _store(settings) as store:
+        if args.what == "process":
+            result = direct_invite.process_requests(
+                store, settings, config=branch, limit=args.limit,
+                actor=args.actor,
+            )
+            result.update(direct_invite.reconcile_deliveries(
+                store, actor=args.actor))
+            print(report.kv(sorted(result.items())))
+            if not branch.enabled:
+                print(report.warn(
+                    "ветка выключена — согласия копятся, ссылки не выдаются"
+                ))
+            return 0
+
+        print(report.kv(sorted(branch.public_status().items())))
+        print()
+        rows = direct_invite.status_rows(store, limit=args.limit)
+        if not rows:
+            print("заявок пока нет")
+            return 0
+        print(report.table([
+            {
+                "заявка": row["request_id"],
+                "кому": row["username"] or row["contact_id"],
+                "сфера": row["sector_name"],
+                "состояние": row["status"],
+                "попыток": row["attempt_count"],
+                "ссылка выдана": (row["link_delivered_at"] or "")[:16] or "—",
+                "почему нет": (row["last_error"] or "")[:40] or "",
+            }
+            for row in rows
+        ]))
+        return 0
+
+
 def cmd_arm(args) -> int:
     settings = _settings(args)
     message = dispatcher.arm(settings, args.state == "on", actor=args.actor)
@@ -1155,6 +1196,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hold", action="store_true",
                    help="только поставить в очередь, не выпускать")
     p.set_defaults(func=cmd_autoreply)
+
+    p = sub.add_parser("invites", help="автовыдача бесплатного теста")
+    p.add_argument("what", nargs="?", default="status",
+                   choices=("status", "process"),
+                   help="status — что настроено и в каком состоянии заявки; "
+                        "process — выпустить ссылки по накопившимся согласиям")
+    p.add_argument("--limit", type=int, default=10)
+    p.set_defaults(func=cmd_invites)
 
     p = sub.add_parser("poll", help="забрать результаты и входящие")
     p.add_argument("what", nargs="?", default="all",

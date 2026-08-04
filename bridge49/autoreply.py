@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import accounts as accounts_mod
+from . import direct_invite
 from . import replies
 from .inbound_decision import decide_inbound_reply
 from .presales_context import non_silent_boundary_reply
@@ -191,7 +192,34 @@ def discovery_context(thread: dict) -> dict[str, str]:
             if str(k).strip() and str(v).strip()}
 
 
-def build_context(store: Store, inbound: dict, thread: dict) -> dict[str, Any]:
+def account_role_for(store: Store, inbound: dict) -> str:
+    """Роль аккаунта, по которой определяется канал согласия.
+
+    У аккаунта может быть несколько ролей из семейства отправителей, и главная
+    не всегда та, что отвечает в этом диалоге. Берём первую, которая вообще
+    отображается в канал: сервису важно, откуда пришло согласие, и подставлять
+    роль, не относящуюся к переписке, нельзя — она попадёт в учёт доступов.
+    """
+    account = accounts_mod.get(store, int(inbound["account_id"]))
+    if account is None:
+        return ""
+    roles = account.get("roles") or []
+    if isinstance(roles, str):
+        try:
+            roles = json.loads(roles)
+        except (TypeError, ValueError):
+            roles = []
+    candidates = [str(r) for r in roles] or [str(account.get("role") or "")]
+    for role in candidates:
+        if direct_invite.source_channel_for_role(role):
+            return role
+    return str(account.get("role") or "")
+
+
+def build_context(
+    store: Store, inbound: dict, thread: dict,
+    *, branch_config: "direct_invite.BranchConfig | None" = None,
+) -> dict[str, Any]:
     """Собрать движку контекст из наших таблиц."""
     account = accounts_mod.get(store, int(inbound["account_id"]))
     if account is None:
@@ -205,6 +233,15 @@ def build_context(store: Store, inbound: dict, thread: dict) -> dict[str, Any]:
         "SELECT id FROM handoffs WHERE thread_id = ? AND status IN ('new','taken')",
         (thread["id"],),
     )
+
+    # Автовыдача бесплатного теста. Движок обязан знать две вещи: точный список
+    # сфер, которым доступ можно выдать без менеджера, и работает ли ветка для
+    # уже выясненной сферы этого собеседника. Без них он всегда выбирает ручной
+    # путь — не потому что так решил, а потому что не видит альтернативы.
+    branch = branch_config or direct_invite.BranchConfig.from_env()
+    sector = str(discovery_context(thread).get("sector") or "")
+    branch_context = branch.context_for_sector(sector) if sector else None
+
     return {
         "provider_id": PROVIDER_ID,
         "inbound_id": str(inbound["id"]),
@@ -220,6 +257,9 @@ def build_context(store: Store, inbound: dict, thread: dict) -> dict[str, Any]:
         "auto_reply_count": auto_reply_count(store, thread),
         "discovery_context": discovery_context(thread),
         "semantic_handoff_active": handoff is not None,
+        "direct_invite_sector_catalog": branch.active_sector_catalog(),
+        "direct_invite_context": branch_context or {},
+        "free_test_access_branch": branch_context or {"branch": "manager"},
     }
 
 
@@ -282,6 +322,7 @@ def apply(
     *,
     scheduled_at: str | None = None,
     actor: str = "autoreply",
+    branch_config: "direct_invite.BranchConfig | None" = None,
 ) -> dict[str, Any]:
     """Разложить решение движка по нашим действиям.
 
@@ -300,6 +341,9 @@ def apply(
         "handoff": "",
         "sent_text": "",
         "review_reason": "",
+        # Заявка на автовыдачу. Непустая означает, что человек получит ссылку
+        # сам и менеджер ему не нужен.
+        "invite": "",
     }
 
     remember_discovery(store, thread, decision.get("collected_fields_update") or {})
@@ -333,7 +377,26 @@ def apply(
     if verdict == "knowledge_gap":
         reply_text = KNOWLEDGE_GAP_REPLY
 
-    if verdict in HANDOFF_DECISIONS:
+    # Развилка автовыдачи. У них она стоит ровно здесь же — перед тем, как
+    # звать менеджера: `if direct_invite is not None: ... else: create_handoff`.
+    # Согласие на тест по разрешённой сфере закрывается само, и карточка тогда
+    # не нужна — она означала бы, что человека всё-таки ждёт менеджер.
+    #
+    # Если ветка не подошла (выключена, сфера чужая, канал не тот), всё идёт
+    # прежним путём. Автоматика умеет только добавлять.
+    if direct_invite.consent_from_decision(decision):
+        recorded = direct_invite.record_consent(
+            store,
+            config=branch_config or direct_invite.BranchConfig.from_env(),
+            thread=thread,
+            inbound=inbound,
+            account_role=account_role_for(store, inbound),
+            sector_id=direct_invite.sector_from_decision(decision),
+        )
+        if recorded is not None:
+            result["invite"] = str(recorded["request_id"])
+
+    if verdict in HANDOFF_DECISIONS and not result["invite"]:
         note = str(decision.get("knowledge_gap") or decision.get("reason") or "")
         result["handoff"] = open_handoff(store, thread, verdict, note)
 
@@ -369,7 +432,8 @@ def apply(
         result["review_reason"] = reason
 
     store.log(actor, f"autoreply.{verdict}", thread["id"],
-              f"задача={result['task'] or '—'} карточка={result['handoff'] or '—'}")
+              f"задача={result['task'] or '—'} карточка={result['handoff'] or '—'} "
+              f"тест={result['invite'] or '—'}")
     store.commit()
     return result
 
@@ -382,6 +446,7 @@ def handle(
     scheduled_at: str | None = None,
     actor: str = "autoreply",
     llm_caller=None,
+    branch_config: "direct_invite.BranchConfig | None" = None,
 ) -> dict[str, Any]:
     """Полный ход: собрать контекст, спросить движок, разложить решение.
 
@@ -395,12 +460,14 @@ def handle(
         raise AutoReplyError("нет диалога для входящего")
     if arabic_script_peer(store, inbound, thread):
         raise AutoReplyError("собеседник записан арабским письмом")
-    context = build_context(store, inbound, thread)
+    context = build_context(store, inbound, thread,
+                            branch_config=branch_config)
     kwargs: dict[str, Any] = {"command": command}
     if llm_caller is not None:
         kwargs["llm_caller"] = llm_caller
     decision = decide_inbound_reply(context, **kwargs)
-    applied = apply(store, inbound, decision, scheduled_at=scheduled_at, actor=actor)
+    applied = apply(store, inbound, decision, scheduled_at=scheduled_at,
+                    actor=actor, branch_config=branch_config)
     return {**applied, "engine": decision}
 
 
@@ -553,7 +620,11 @@ def run(
     if not settings.autoreply_enabled:
         return {"enabled": False, "handled": 0, "queued": 0, "failed": 0}
 
-    handled = queued = failed = skipped = 0
+    # Один раз на проход: конфиг читается с диска, и дёргать его на каждое
+    # входящее незачем.
+    branch_config = direct_invite.BranchConfig.from_env()
+
+    handled = queued = failed = invited = skipped = 0
     for inbound in pending(store, limit):
         thread = thread_for(store, inbound)
         reason = skip_reason(store, inbound, thread, settings) if thread else ""
@@ -575,9 +646,12 @@ def run(
                 scheduled_at=reply_moment(inbound, settings),
                 actor=actor,
                 llm_caller=llm_caller,
+                branch_config=branch_config,
             )
             if result["task"]:
                 queued += 1
+            if result.get("invite"):
+                invited += 1
         except Exception as exc:  # noqa: BLE001 — разбор одного не рушит проход
             failed += 1
             store.log(actor, "autoreply.failed", str(inbound["id"]),
@@ -596,7 +670,7 @@ def run(
 
     store.log(actor, "autoreply.run", "",
               f"разобрано={handled} поставлено={queued} ошибок={failed} "
-              f"пропущено={skipped}")
+              f"пропущено={skipped} тестов={invited}")
     store.commit()
     return {"enabled": True, "handled": handled, "queued": queued,
-            "failed": failed, "skipped": skipped}
+            "failed": failed, "skipped": skipped, "invited": invited}
