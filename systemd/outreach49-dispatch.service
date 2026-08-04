@@ -7,7 +7,12 @@ Type=oneshot
 WorkingDirectory=/opt/outreach49
 Environment=BRIDGE49_HOME=/opt/outreach49
 # Без файла var/ARMED это просто предпросмотр в журнал.
-ExecStart=/opt/outreach49/bin/bridge49 dispatch --confirm
+#
+# --outreach обязателен, а не украшение. Без фильтра пачка достаётся тем
+# задачам, что просрочены дольше, а каталог разведки просрочен на часы и
+# исчисляется тысячами: смешанный прогон выгребал бы только его, и письмо
+# человеку не уходило бы никогда. Чтения выпускает свой таймер, research.
+ExecStart=/opt/outreach49/bin/bridge49 dispatch --outreach --confirm
 TimeoutStartSec=600
 
 [Install]

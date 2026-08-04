@@ -551,9 +551,17 @@ def cmd_dispatch(args) -> int:
             print(f"возвращено в план: {count}")
             return 0
         try:
+            if args.read and args.outreach:
+                print(report.warn("--read и --outreach вместе не имеют смысла"))
+                return 2
+            cadence = None
+            if args.read:
+                cadence = dispatcher.CADENCE_READ
+            elif args.outreach:
+                cadence = dispatcher.CADENCE_OUTREACH
             result = asyncio.run(dispatcher.dispatch(
                 store, settings, campaign_id=args.campaign, limit=args.limit,
-                cadence=dispatcher.CADENCE_READ if args.read else None,
+                cadence=cadence,
                 confirm=args.confirm, actor=args.actor,
             ))
         except dispatcher.DispatchBusy as exc:
@@ -1121,6 +1129,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--campaign")
     p.add_argument("--read", action="store_true",
                    help="только чтения метаданных, рассылку не трогать")
+    # Без фильтра пачка достаётся тому, кто просрочен дольше. Каталог разведки
+    # просрочен на часы и исчисляется тысячами задач, поэтому смешанный прогон
+    # выгребал бы только его, а письмо человеку не уходило бы никогда — не
+    # из-за запрета, а потому что до него не доходила очередь.
+    p.add_argument("--outreach", action="store_true",
+                   help="только рассылка, разведку не трогать")
     p.add_argument("--limit", type=int)
     p.add_argument("--confirm", action="store_true",
                    help="реально поставить команды (нужен ещё и режим arm on)")
