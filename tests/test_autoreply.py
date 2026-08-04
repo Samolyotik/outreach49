@@ -683,6 +683,33 @@ class RepeatedRepliesTests(unittest.TestCase):
             add_outreach_task()
 
 
+class HandoffVocabularyTests(unittest.TestCase):
+    """Обещание менеджера обязано доходить до менеджера.
+
+    04.08 машина пять раз написала человеку «передаю менеджеру», и ни одной
+    карточки заведено не было: в списке стояло имя `manager_handoff`, которого
+    движок не выдаёт, а настоящий вердикт зовётся `reply_and_handoff`. Условие
+    не совпадало, и несовпадение выглядело как штатная работа.
+
+    Опаснее всего то, что с включением автоответов поллер перестал заводить
+    карточки сам: этот список стал единственным путём к человеку.
+    """
+
+    def test_handoff_decisions_are_real_engine_verdicts(self):
+        unknown = autoreply.HANDOFF_DECISIONS - autoreply.ENGINE_DECISIONS
+        self.assertEqual(
+            unknown, set(),
+            f"вердикт, которого движок не выдаёт: {unknown}. Такое имя не "
+            f"сработает никогда и не будет заметно.",
+        )
+
+    def test_semantic_handoff_verdicts_are_covered(self):
+        """Оба handoff-вердикта словаря обязаны звать человека."""
+        for verdict in ("reply_and_handoff", "handoff"):
+            with self.subTest(verdict=verdict):
+                self.assertIn(verdict, autoreply.HANDOFF_DECISIONS)
+
+
 class StaleInboundGateTests(unittest.TestCase):
     """Машина не отвечает на то, что успело состариться.
 

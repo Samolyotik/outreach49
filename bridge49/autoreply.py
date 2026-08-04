@@ -52,8 +52,32 @@ SILENT_DECISIONS = frozenset({"opt_out", "ignore", "pause_conversation",
                               "hold_for_review"})
 
 #: Решения, после которых менеджеру заводится карточка.
-HANDOFF_DECISIONS = frozenset({"manager_handoff", "knowledge_gap",
+#:
+#: Имена обязаны совпадать со словарём движка, а он такой:
+#: reply | reply_and_pause | reply_and_handoff | handoff | ignore | opt_out |
+#: pause | knowledge_gap (плюс hold_for_review при срыве контракта).
+#:
+#: Здесь стоял `manager_handoff` — имя, которого движок не выдаёт никогда. Из-за
+#: этого пять раз подряд машина написала человеку «передаю менеджеру», и ни одной
+#: карточки заведено не было: условие не совпадало, а несовпадение выглядело как
+#: штатная работа. Ошибка тем опаснее, что с включением автоответов поллер
+#: перестал заводить карточки сам — этот список стал единственным путём к
+#: человеку.
+#:
+#: `manager_handoff` оставлен как страховка на случай, если такое имя появится.
+HANDOFF_DECISIONS = frozenset({"reply_and_handoff", "handoff",
+                               "manager_handoff", "knowledge_gap",
                                "hold_for_review"})
+
+#: Весь словарь вердиктов движка. Нужен не для работы, а для проверки: список
+#: выше обязан быть его подмножеством, иначе опечатка снова превратится в тихий
+#: отказ вместо поломки.
+ENGINE_DECISIONS = frozenset({
+    "reply", "reply_and_pause", "reply_and_handoff", "handoff", "ignore",
+    "opt_out", "pause", "knowledge_gap", "hold_for_review",
+    # Имена, в которые наш слой переводит часть вердиктов движка.
+    "auto_reply", "pause_conversation", "manager_handoff",
+})
 
 #: Ответ на жёсткую нехватку знаний. Текст перенесён дословно из прежнего
 #: контура: он обещает ровно то, что мы действительно делаем — заводим
