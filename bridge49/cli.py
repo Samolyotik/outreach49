@@ -682,7 +682,10 @@ def cmd_autoreply(args) -> int:
 
 def cmd_invites(args) -> int:
     """Автовыдача бесплатного теста: что настроено и что уже выдано."""
-    settings = _settings(args)
+    # Реквизиты моста нужны только там, где мы сами выпускаем доставку.
+    settings = _settings(
+        args, need_dsn=(args.what == "process" and not args.hold)
+    )
     branch = direct_invite.BranchConfig.from_env()
 
     with _store(settings) as store:
@@ -691,12 +694,38 @@ def cmd_invites(args) -> int:
                 store, settings, config=branch, limit=args.limit,
                 actor=args.actor,
             )
+
+            # Свою кампанию выпускаем здесь же, и это не удобство, а
+            # необходимость. Доставка ссылки — действие `reply_private_dm`,
+            # то есть класс ответов: таймер рассылки её не берёт (он сужен до
+            # `--outreach`), а прогон автоответов выпускает только свою
+            # кампанию. Без этой строки выпущенная ссылка легла бы в очередь
+            # навсегда — человек согласился, ссылка выпущена, и не уходит.
+            sent = 0
+            if not args.hold and settings.armed:
+                try:
+                    released = asyncio.run(dispatcher.dispatch(
+                        store, settings,
+                        campaign_id=direct_invite.INVITE_CAMPAIGN_ID,
+                        confirm=True, actor=args.actor,
+                    ))
+                    sent = int(released.get("dispatched") or 0)
+                except dispatcher.DispatchBusy as exc:
+                    print(report.warn(str(exc)))
+                except dispatcher.DispatchBlocked as exc:
+                    print(report.warn(f"выпуск придержан: {exc}"))
+            result["отправлено"] = sent
+
             result.update(direct_invite.reconcile_deliveries(
                 store, actor=args.actor))
             print(report.kv(sorted(result.items())))
             if not branch.enabled:
                 print(report.warn(
                     "ветка выключена — согласия копятся, ссылки не выдаются"
+                ))
+            if result.get("выпущено") and not settings.armed:
+                print(report.warn(
+                    "боевой режим выключен — ссылки выпущены, но не уйдут"
                 ))
             return 0
 
@@ -1203,6 +1232,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="status — что настроено и в каком состоянии заявки; "
                         "process — выпустить ссылки по накопившимся согласиям")
     p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--hold", action="store_true",
+                   help="только выпустить ссылки, доставку не отправлять")
     p.set_defaults(func=cmd_invites)
 
     p = sub.add_parser("poll", help="забрать результаты и входящие")
