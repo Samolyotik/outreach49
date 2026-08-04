@@ -116,8 +116,11 @@ def chat_message(seed: str) -> str:
     # вопросительный.
     if "?" not in opening and "?" not in closer:
         closer = _pick(_CHAT_QUESTION_CLOSERS, seed, "чат-вопрос")
-    return " ".join(filter(None, (
-        opening, _pick(_CHAT_NEEDS, seed, "чат-суть"), closer,
+    # Абзацами, а не в строку: так уходили сегодняшние сообщения, и в
+    # Telegram три предложения подряд читаются хуже двух абзацев.
+    return "\n\n".join(filter(None, (
+        opening, " ".join(filter(None, (
+            _pick(_CHAT_NEEDS, seed, "чат-суть"), closer))),
     )))
 
 
@@ -128,6 +131,7 @@ def channel_dm(seed: str) -> str:
         _pick(_DM_WHY, seed, "канал-почему"),
         _pick(_DM_OFFER, seed, "канал-оффер"),
     )))
+
 
 
 def validate(text: str, *, kind: str) -> list[str]:
