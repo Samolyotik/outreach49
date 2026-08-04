@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -21,7 +21,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   id               INTEGER PRIMARY KEY,          -- Radar Account.id (801..852)
   label            TEXT    NOT NULL,
   program_code     TEXT,
-  role             TEXT    NOT NULL,             -- outreach-роль: dm_sender и т.п.
+  role             TEXT    NOT NULL,             -- главная роль, для отчётов
+  -- Все роли аккаунта. Radar разрешает несколько из семейства отправителей и
+  -- объединяет их действия; помнить только первую значит не уметь того, что
+  -- аккаунту разрешено второй.
+  roles            TEXT    NOT NULL DEFAULT '[]',
   allowed_actions  TEXT    NOT NULL DEFAULT '[]',
   enabled          INTEGER NOT NULL DEFAULT 0,
   publish_inbound  INTEGER NOT NULL DEFAULT 0,
@@ -292,6 +296,7 @@ class Store:
         # Поимённый список аккаунтов кампании. Пусто — любой из подходящих
         # по роли.
         ("campaigns", "accounts", "TEXT NOT NULL DEFAULT '[]'"),
+        ("accounts", "roles", "TEXT NOT NULL DEFAULT '[]'"),
     )
 
     def _ensure_columns(self) -> None:

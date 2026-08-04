@@ -717,3 +717,49 @@ class frozen_clock:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiRoleMirrorTests(unittest.TestCase):
+    """Аккаунт может нести несколько ролей — зеркало обязано помнить все.
+
+    Radar разрешает несколько ролей из семейства отправителей и объединяет их
+    действия. Реестр хранил только `roles[0]`, и планировщик не умел того, что
+    аккаунту разрешено второй ролью: 04.08 двухролевой chat_sender+dm_sender
+    не проходил проверку на `create_private_chat`.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "b.sqlite")
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_both_roles_survive_the_snapshot(self):
+        accounts_mod.sync(self.store, [{
+            "id": 863, "label": "two-roles", "runtime_state": "running",
+            "outreach": {
+                "enabled": True, "roles": ["chat_sender", "dm_sender"],
+                "allowed_actions": ["send_private_dm", "create_private_chat"],
+            },
+        }])
+
+        account = accounts_mod.get(self.store, 863)
+
+        self.assertEqual(account["roles"], {"chat_sender", "dm_sender"})
+        self.assertEqual(account["role"], "chat_sender")
+        # Действие второй роли теперь доступно.
+        ok, why = accounts_mod.usable(account, "create_private_chat")
+        self.assertTrue(ok, why)
+
+    def test_a_single_role_still_works(self):
+        accounts_mod.sync(self.store, [{
+            "id": 801, "label": "one-role", "runtime_state": "running",
+            "outreach": {"enabled": True, "roles": ["source_reader"],
+                         "allowed_actions": ["check_public_chat_metadata"]},
+        }])
+
+        account = accounts_mod.get(self.store, 801)
+
+        self.assertEqual(account["roles"], {"source_reader"})

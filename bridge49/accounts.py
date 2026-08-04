@@ -58,6 +58,7 @@ def sync(
             str(raw.get("label") or f"account-{account_id}"),
             raw.get("program_code"),
             str(roles[0]),
+            dumps(sorted(str(r) for r in roles)),
             dumps(sorted(outreach.get("allowed_actions") or [])),
             int(bool(outreach.get("enabled"))),
             int(bool(outreach.get("publish_inbound"))),
@@ -70,7 +71,7 @@ def sync(
 
         if existing:
             store.execute(
-                "UPDATE accounts SET label=?, program_code=?, role=?, "
+                "UPDATE accounts SET label=?, program_code=?, role=?, roles=?, "
                 "allowed_actions=?, enabled=?, publish_inbound=?, "
                 "allow_immediate=?, runtime_state=?, last_heartbeat_at=?, "
                 "synced_at=? WHERE id=?",
@@ -79,10 +80,10 @@ def sync(
             updated += 1
         else:
             store.execute(
-                "INSERT INTO accounts(label, program_code, role, allowed_actions, "
-                "enabled, publish_inbound, allow_immediate, runtime_state, "
-                "last_heartbeat_at, synced_at, id) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO accounts(label, program_code, role, roles, "
+                "allowed_actions, enabled, publish_inbound, allow_immediate, "
+                "runtime_state, last_heartbeat_at, synced_at, id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 fields,
             )
             added += 1
@@ -130,7 +131,8 @@ def get(store: Store, account_id: int) -> dict | None:
 def _hydrate(row: Any) -> dict:
     account = dict(row)
     account["allowed_actions"] = set(loads(account.get("allowed_actions"), []))
-    account["roles"] = {account["role"]}
+    # Пустой список — реестр от старого снимка, когда роль была одна.
+    account["roles"] = set(loads(account.get("roles"), [])) or {account["role"]}
     account["enabled"] = bool(account["enabled"])
     account["publish_inbound"] = bool(account["publish_inbound"])
     account["allow_immediate"] = bool(account["allow_immediate"])
