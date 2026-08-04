@@ -396,6 +396,45 @@ def queue_send(
     }
 
 
+def supersede_pending_reply(store: Store, pending: Any, *,
+                            actor: str = "autoreply") -> bool:
+    """Снять ещё не ушедший ответ, чтобы поставить вместо него свежий.
+
+    Снимаем только то, чего наша сторона ещё не касалась: задача `planned` и
+    без `request_id`/`command_id`. Как только команда ушла в Radar, отменять
+    нечего — сообщение уже в пути, и вторая попытка дала бы дубль. Приём и
+    ровно это различение перенесены из прежнего контура
+    (`bridge49_handoff_reply.py`, `supersede`).
+
+    Условие перепроверяется в самом UPDATE, а не только чтением: между
+    проверкой и записью диспетчер мог забрать задачу. Ноль изменённых строк —
+    значит забрал, и заменять уже нельзя.
+
+    Письмо со ссылкой не трогаем никогда: это не черновик, а то, ради чего
+    человек и писал. Пусть уходит, а на новое сообщение ответим следующим.
+    """
+    if str(pending["state"]) != "planned":
+        return False
+    if pending["request_id"] or pending["command_id"]:
+        return False
+    carries_invite = store.one(
+        "SELECT 1 FROM direct_invites WHERE task_id = ?", (pending["id"],))
+    if carries_invite is not None:
+        return False
+    cursor = store.execute(
+        "UPDATE tasks SET state = 'cancelled', updated_at = ? "
+        " WHERE id = ? AND state = 'planned' "
+        "   AND request_id IS NULL AND command_id IS NULL",
+        (now(), pending["id"]),
+    )
+    if not cursor.rowcount:
+        return False
+    store.log(actor, "reply.superseded", str(pending["id"]),
+              "собеседник дописал — ответ пересобран")
+    store.commit()
+    return True
+
+
 def queue_reply(
     store: Store,
     *,
@@ -408,6 +447,7 @@ def queue_reply(
     campaign_id: str | None = None,
     review_reason: str | None = None,
     scheduled_at: str | None = None,
+    supersede: bool = False,
 ) -> dict[str, Any]:
     """Поставить ответ в очередь. Ничего никуда не отправляет.
 
@@ -419,6 +459,13 @@ def queue_reply(
     ответ, который движок выдал неуверенно, — отправить его можно, но человек
     должен перечитать. ``scheduled_at`` откладывает выпуск: автоответ уходит
     не мгновенно, а спустя паузу на чтение.
+
+    ``supersede`` разрешает заменить ещё не ушедший ответ этому же собеседнику.
+    Нужно для автоответов: человек дописывает мысль вторым и третьим
+    сообщением, а наш ответ на первое лежит и ждёт паузы на чтение. Отказ в
+    такой ситуации — не защита, а ложная тревога: 04.08 он трижды завёл
+    менеджеру карточку о несуществующем сбое и потерял уточнение собеседника.
+    У ручных ответов замены нет: там отказ информирует человека, а не машину.
     """
     message = (text or "").strip()
     if not message:
@@ -434,11 +481,14 @@ def queue_reply(
     campaign_id = ensure_reply_campaign(store) if campaign_id is None else campaign_id
 
     pending = store.one(
-        "SELECT id FROM tasks WHERE campaign_id = ? AND contact_id = ? "
-        "AND state IN ('planned', 'queued')",
+        "SELECT id, state, request_id, command_id FROM tasks "
+        " WHERE campaign_id = ? AND contact_id = ? "
+        "   AND state IN ('planned', 'queued') ORDER BY created_at DESC, id DESC",
         (campaign_id, contact_id),
     )
-    if pending is not None:
+    if pending is not None and not (
+        supersede and supersede_pending_reply(store, pending, actor=actor)
+    ):
         raise ReplyError(
             f"этому собеседнику уже поставлен ответ ({pending['id']}); "
             "дождитесь отправки или снимите задачу"

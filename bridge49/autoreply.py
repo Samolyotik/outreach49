@@ -498,6 +498,9 @@ def apply(
                 review_reason=reason or None,
                 scheduled_at=scheduled_at,
                 actor=actor,
+                # Человек мог дописать, пока наш ответ ждёт паузы на чтение.
+                # Тогда его надо пересобрать, а не звать менеджера.
+                supersede=True,
             )
         except Exception:
             # Ссылка уже выпущена, но письма с ней не будет. Возвращаем заявку

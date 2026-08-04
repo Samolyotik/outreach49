@@ -1086,3 +1086,126 @@ class _FakeStartBot:
             expires_at=now(), replayed=False,
             ready_message=direct_invite.render_invite_message(
                 profile.sector_name, self.link))
+
+
+class FollowUpMessageTests(unittest.TestCase):
+    """Собеседник дописывает мысль вторым сообщением.
+
+    Ответ на первое лежит и ждёт паузы на чтение — она нужна, чтобы ответ не
+    выглядел автоматом. В этот зазор приходит второе сообщение, и раньше оно
+    падало с «этому собеседнику уже поставлен ответ»: менеджеру заводилась
+    карточка о несуществующем сбое, а уточнение терялось. 04.08 так вышло
+    трижды, в том числе на @qw552, дописавшем «дома,бани,коттеджи» через 27
+    секунд после названия сферы.
+
+    Заменять можно только то, чего наша сторона ещё не касалась: как только
+    команда ушла в Radar, сообщение уже в пути и вторая попытка даст дубль.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        contact = entities.add_contact(
+            self.store, username="someone", segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (self.thread_id, self.contact_id, now(), now()))
+        replies.ensure_reply_campaign(
+            self.store, replies.AUTO_CAMPAIGN_ID, replies.AUTO_CAMPAIGN_NAME,
+            "служебная: автоответы на входящие")
+        self.store.commit()
+        self.add_inbound(5001, "Привлечение клиентов для строительных компаний")
+        self.first = replies.queue_reply(
+            self.store, text="Спасибо, зафиксировал.", thread_id=self.thread_id,
+            campaign_id=replies.AUTO_CAMPAIGN_ID, supersede=True)["task"]
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add_inbound(self, inbound_id: int, text: str):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(?,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            (inbound_id, text, now(), now()))
+        self.store.commit()
+
+    def second(self, **kw):
+        return replies.queue_reply(
+            self.store, text="Понял: дома, бани, коттеджи.",
+            thread_id=self.thread_id, campaign_id=replies.AUTO_CAMPAIGN_ID, **kw)
+
+    def state(self, task_id):
+        return self.store.one(
+            "SELECT state FROM tasks WHERE id = ?", (task_id,))["state"]
+
+    # -- замена ------------------------------------------------------------
+
+    def test_the_follow_up_replaces_the_waiting_answer(self):
+        self.add_inbound(5002, "дома,бани,коттеджи,квартиры под ключ")
+        second = self.second(supersede=True)["task"]
+        self.assertNotEqual(second, self.first)
+        self.assertEqual(self.state(self.first), "cancelled")
+        self.assertEqual(self.state(second), "planned")
+
+    def test_only_one_answer_is_left_alive(self):
+        self.add_inbound(5002, "ещё уточнение")
+        self.second(supersede=True)
+        alive = self.store.query(
+            "SELECT id FROM tasks WHERE contact_id = ? AND state = 'planned'",
+            (self.contact_id,))
+        self.assertEqual(len(alive), 1, "два ответа одному человеку")
+
+    # -- когда заменять нельзя --------------------------------------------
+
+    def test_a_dispatched_answer_is_never_replaced(self):
+        """Команда ушла в Radar — сообщение уже в пути, отменять нечего."""
+        self.store.execute(
+            "UPDATE tasks SET request_id = 'uuid-1' WHERE id = ?", (self.first,))
+        self.store.commit()
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError):
+            self.second(supersede=True)
+        self.assertEqual(self.state(self.first), "planned")
+
+    def test_a_queued_answer_is_never_replaced(self):
+        self.store.execute(
+            "UPDATE tasks SET state = 'queued' WHERE id = ?", (self.first,))
+        self.store.commit()
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError):
+            self.second(supersede=True)
+
+    def test_the_invite_letter_is_never_replaced(self):
+        """Письмо со ссылкой — не черновик, а то, ради чего человек и писал."""
+        from bridge49 import direct_invite
+        self.store.execute(
+            "INSERT INTO direct_invites(id, request_id, thread_id, contact_id, "
+            "account_id, inbound_id, source_channel, outreach_sector_id, "
+            "sector_id, sector_name, test_group_profile_id, "
+            "consent_recorded_at, consent_source, status, attempt_count, "
+            "task_id, created_at, updated_at) "
+            "VALUES('d1','dfi_1',?,?,821,'5001','private_dm','auto_import_dealers',"
+            "'cars_abroad','Авто из-за границы','cars_abroad_test_group',?,"
+            "'presales_v2',?,1,?,?,?)",
+            (self.thread_id, self.contact_id, now(),
+             direct_invite.STATUS_CREATED, self.first, now(), now()))
+        self.store.commit()
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError):
+            self.second(supersede=True)
+        self.assertEqual(self.state(self.first), "planned")
+
+    def test_manual_replies_still_refuse(self):
+        """У человека отказ информативен: он должен знать, что ответ уже ждёт."""
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError):
+            self.second()
+        self.assertEqual(self.state(self.first), "planned")
