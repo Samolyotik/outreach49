@@ -123,7 +123,9 @@ def _touch_thread_outbound(store: Store, task_id: str, result: dict) -> None:
         peer_key=peer_key,
         contact_id=task["contact_id"],
         campaign_id=task["campaign_id"],
-        surface="channel_dm" if task["action"] == "send_channel_dm" else "private_dm",
+        surface=("channel_dm"
+                 if task["action"] in ("send_channel_dm", "reply_channel_dm")
+                 else "private_dm"),
         outbound_at=now(),
     )
 

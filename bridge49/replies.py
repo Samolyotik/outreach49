@@ -19,13 +19,20 @@ username: username — алиас, он меняется, а уведомлен�
 """
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any
 
 from .store import Store, dumps, new_id, now
 
 #: Действия, которыми мы отвечаем. Для них не действует защита от повторного
 #: касания: она про первое касание, а ответ — продолжение начатого разговора.
-REPLY_ACTIONS = frozenset({"reply_private_dm"})
+#:
+#: Здесь стоят ЛОГИЧЕСКИЕ имена. `reply_channel_dm` уезжает в Radar как
+#: `send_channel_dm` (см. `catalog.Action.wire`), но темп, дневной бюджет и
+#: снятие защиты от повторного касания считаются по имени в задаче — поэтому
+#: ответ в личку канала обязан отличаться от рассылки в неё же.
+REPLY_ACTIONS = frozenset({"reply_private_dm", "reply_channel_dm"})
 
 #: Служебная кампания для ручных ответов. Задача не может существовать без
 #: кампании, а заводить сегмент ради одного адресата бессмысленно.
@@ -134,6 +141,106 @@ def ensure_contact(store: Store, thread: dict, inbound: dict) -> str:
 #: channel_sender, личное сообщение — только dm_sender. Это политика Radar, а
 #: не наша: он проверит её заново перед исполнением.
 SEND_ACTIONS = {"channel_dm": "send_channel_dm", "user": "send_private_dm"}
+
+
+@dataclass(frozen=True)
+class ReplyRoute:
+    """Чем отвечать на входящее этой поверхности."""
+
+    surface: str
+    action: str
+    role: str
+
+
+#: Ответ выбирается по поверхности входящего, а не по одному действию на всё.
+#:
+#: `reply_private_dm` у Radar принимает ТОЛЬКО личку человека: он сверяет
+#: `surface == private_dm` и `peer.type == user` и иначе отвечает
+#: `invalid_inbound_reply_target`. Значит для личек каналов это действие не
+#: подходит никогда, и задача с ним обречена ещё до выпуска. Ровно так 04.08
+#: остался без ответа человек, написавший «Покажите» в monoforum
+#: @armavir_auto23.
+REPLY_ROUTES = {
+    "private_dm": ReplyRoute("private_dm", "reply_private_dm", "dm_sender"),
+    "channel_dm": ReplyRoute("channel_dm", "reply_channel_dm", "channel_sender"),
+}
+
+
+def reply_route(surface: Any) -> ReplyRoute:
+    normalized = str(surface or "").strip()
+    route = REPLY_ROUTES.get(normalized)
+    if route is None:
+        raise ReplyError(
+            f"на поверхность {normalized or '<пусто>'} отвечать нечем"
+        )
+    return route
+
+
+def channel_reply_params(inbound: dict) -> dict[str, Any]:
+    """Куда именно писать ответ в личку канала.
+
+    Проверки перенесены из прежнего контура (`bridge49_handoff_reply.py`,
+    `_channel_target`) и намеренно въедливы: у `send_channel_dm` нет привязки
+    к входящему, поэтому Radar не может, как в личке, вывести адресата из
+    своего же факта и перепроверить нас. Здесь адресата задаём мы — и ошибка
+    отправит сообщение в чужой канал.
+
+    Поэтому берём цель только из фида Radar, сверяем её с тем, что сохранили у
+    себя, и требуем следа прошлой команды: monoforum канала существует потому,
+    что мы туда написали первыми. Без такого следа это не наш разговор.
+    """
+    raw = inbound.get("raw")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except ValueError:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    peer = raw.get("peer")
+    message = raw.get("message")
+    if (
+        str(raw.get("schema") or "") != "tgr.outreach.inbound"
+        or int(raw.get("version") or 0) != 1
+        or str(raw.get("surface") or "") != "channel_dm"
+        or not isinstance(peer, dict)
+        or str(peer.get("type") or "") != "channel_dm"
+        or not isinstance(message, dict)
+    ):
+        raise ReplyError("у входящего нет достоверного происхождения от Radar")
+
+    username = str(peer.get("username") or "").strip().lstrip("@").casefold()
+    stored_username = str(
+        inbound.get("peer_username") or ""
+    ).strip().lstrip("@").casefold()
+    channel_tg_id = peer.get("channel_tg_id")
+    monoforum_tg_id = peer.get("monoforum_tg_id")
+    if (
+        not username
+        or username != stored_username
+        or not channel_tg_id
+        or not monoforum_tg_id
+        or int(peer.get("tg_id") or 0) != int(monoforum_tg_id)
+        or int(inbound.get("peer_tg_id") or 0) != int(monoforum_tg_id)
+    ):
+        raise ReplyError("цель входящего неполна или расходится с сохранённой")
+
+    raw_account_id = raw.get("account_id")
+    if raw_account_id is not None and int(raw_account_id) != int(
+        inbound.get("account_id") or 0
+    ):
+        raise ReplyError("аккаунт входящего не совпадает с сохранённым")
+
+    correlation = raw.get("correlation")
+    if not isinstance(correlation, dict) or not correlation.get("last_command_id"):
+        raise ReplyError("нет следа прошлой команды: это не наш разговор")
+
+    return {
+        "username": username,
+        "target_channel_tg_id": peer_id(channel_tg_id, "target_channel_tg_id"),
+        "target_monoforum_tg_id": peer_id(
+            monoforum_tg_id, "target_monoforum_tg_id"),
+    }
 
 #: Служебная кампания для точечных отправок вне сегментов.
 SEND_CAMPAIGN_ID = "manual_sends"
@@ -337,21 +444,30 @@ def queue_reply(
             "дождитесь отправки или снимите задачу"
         )
 
+    # Чем отвечать — решает поверхность входящего, а не одно действие на всё.
+    route = reply_route(inbound.get("surface"))
+    if route.surface == "channel_dm":
+        params = channel_reply_params(inbound)
+        params["text"] = message
+    else:
+        params = {
+            "inbound_notification_id": int(inbound["id"]),
+            "text": message,
+        }
+
     task_id = new_id("task")
     store.execute(
         "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
         "params, mode, scheduled_at, expires_at, state, review_reason, "
         "created_at, updated_at) "
-        "VALUES(?,?,?,?,'reply_private_dm',?,?,?,NULL,'planned',?,?,?)",
+        "VALUES(?,?,?,?,?,?,?,?,NULL,'planned',?,?,?)",
         (task_id, campaign_id, contact_id, int(thread["account_id"]),
-         dumps({
-             "inbound_notification_id": int(inbound["id"]),
-             "text": message,
-         }),
+         route.action, dumps(params),
          mode, scheduled_at or now(), review_reason or None, now(), now()),
     )
     store.log(actor, "reply.queue", task_id,
-              f"acc={thread['account_id']} peer={thread['peer_key']}")
+              f"acc={thread['account_id']} peer={thread['peer_key']} "
+              f"{route.action}")
     store.commit()
     return {
         "task": task_id,
@@ -359,6 +475,8 @@ def queue_reply(
         "account_id": int(thread["account_id"]),
         "peer": thread["peer_key"],
         "inbound_id": int(inbound["id"]),
+        "action": route.action,
+        "surface": route.surface,
         "mode": mode,
         "review_reason": review_reason or "",
     }

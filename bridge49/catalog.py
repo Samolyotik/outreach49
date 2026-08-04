@@ -64,10 +64,26 @@ class Action:
     needs_text: bool = False
     #: Допускает ли флаги online/typing.
     activity_flags: bool = False
+    #: Каким именем действие уходит в Radar, если оно отличается от нашего.
+    #:
+    #: У Radar нет отдельного «ответить в личку канала»: ответ там делается тем
+    #: же `send_channel_dm`, что и первое касание. Но у нас имя действия — это
+    #: ещё и класс темпа, дневной бюджет и снятие защиты от повторного касания
+    #: (`replies.REPLY_ACTIONS`). Назвать ответ проводным именем значит увести
+    #: его в темп рассылки: пауза 30 минут вместо минуты, окно 10–21 и только
+    #: будни — человеку, который написал сейчас, ответили бы в понедельник.
+    #: Приём взят из прежнего контура (`bridge49_handoff_reply.py`), где эти
+    #: два имени разведены ровно по той же причине.
+    wire: str = ""
 
     @property
     def visible(self) -> bool:
         return self.risk in PACED_RISKS
+
+    @property
+    def wire_name(self) -> str:
+        """Имя, которое понимает Radar."""
+        return self.wire or self.name
 
 
 def _a(*args, **kwargs) -> Action:
@@ -116,6 +132,15 @@ ACTIONS: dict[str, Action] = {
            optional=("text", "target_channel_tg_id", "target_monoforum_tg_id",
                      "online", "typing", "attachments"),
            needs_text=True, activity_flags=True),
+        _a("reply_channel_dm", RISK_MATURE_DM, frozenset({"channel_sender"}),
+           "Ответить в monoforum канала. В Radar уходит как send_channel_dm: "
+           "своего действия для ответа там нет, а нам нужно отличать ответ от "
+           "рассылки ради темпа и бюджета.",
+           required=("username",),
+           optional=("text", "target_channel_tg_id", "target_monoforum_tg_id",
+                     "online", "typing", "attachments"),
+           needs_text=True, activity_flags=True,
+           wire="send_channel_dm"),
         _a("sync_channel_dm_replies", RISK_READ, frozenset({"channel_sender"}),
            "Догнать пропущенные ответы в известных monoforum.",
            optional=("limit_per_dialog",)),
@@ -268,9 +293,13 @@ def validate(
             f"{sorted(action.roles)}, у аккаунта {sorted(roles)}"
         )
 
-    if allowed_actions is not None and action_name not in allowed_actions:
+    # Allowlist приходит от Radar и перечислен ЕГО именами. Логическое имя
+    # (`reply_channel_dm`) там не появится никогда — это наше разделение, а не
+    # его. Сверять надо проводное, иначе ответ в личку канала блокируется у
+    # нас же, ещё до моста.
+    if allowed_actions is not None and action.wire_name not in allowed_actions:
         raise ValidationError(
-            f"{action_name} отсутствует в allowed_actions аккаунта"
+            f"{action.wire_name} отсутствует в allowed_actions аккаунта"
         )
 
     known = set(action.required) | set(action.optional)

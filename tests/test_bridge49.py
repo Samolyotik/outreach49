@@ -1825,6 +1825,184 @@ class SendTests(unittest.TestCase):
         self.assertEqual(bridge.calls, [])
 
 
+CHANNEL_ACCOUNT = {
+    "id": 814, "label": "channel-one", "program_code": "TGR1",
+    "runtime_state": "running",
+    "outreach": {
+        "enabled": True, "roles": ["channel_sender"], "publish_inbound": True,
+        "allow_immediate_visible_actions": True,
+        "allowed_actions": [
+            "command_dry_run", "gateway_capabilities", "get_me",
+            "check_channel_dm_metadata", "send_channel_dm", "reply_private_dm",
+            "sync_channel_dm_replies", "mark_messages_read", "send_typing",
+        ],
+    },
+}
+
+#: Настоящий вид входящего из личики канала — снят с события 04.08 у @armavir_auto23.
+CHANNEL_INBOUND_RAW = {
+    "account_id": 814, "business_id": 51,
+    "conversation_key": "814:channel_dm:1073872131745",
+    "correlation": {"external_conversation_id": "c_623729f6f4c1",
+                    "external_job_id": "topup_channels_chats",
+                    "last_command_id": 73794,
+                    "request_id": "ec2c0154-30d6-4497-8a85-f36050062436",
+                    "sent_dm_message_id": 2},
+    "event_id": "814:channel_dm:1073872131745:3",
+    "message": {"content_type": "text", "date": "2026-08-04T16:14:22+00:00",
+                "reply_to_tg_message_id": 2, "sender_tg_id": 3872131745,
+                "text": "Покажите", "tg_message_id": 3},
+    "peer": {"channel_tg_id": 3872131745, "monoforum_tg_id": 1073872131745,
+             "tg_id": 1073872131745, "type": "channel_dm",
+             "username": "armavir_auto23"},
+    "schema": "tgr.outreach.inbound",
+    "sender": {"is_bot": False, "tg_id": 3872131745,
+               "username": "armavir_auto23"},
+    "surface": "channel_dm", "version": 1,
+}
+
+
+class ChannelDmReplyTests(unittest.TestCase):
+    """Ответ в личку канала.
+
+    Radar не умеет `reply_private_dm` по каналу: он сверяет `surface` и тип
+    собеседника и отвечает `invalid_inbound_reply_target`. Отдельного «ответить
+    в канал» у него тоже нет — только `send_channel_dm`. Поэтому у нас два
+    имени: логическое `reply_channel_dm` для темпа и бюджета и проводное
+    `send_channel_dm` для Radar. Приём взят из прежнего контура коллеги.
+
+    04.08 человек написал «Покажите» в monoforum @armavir_auto23, и ответ не
+    ушёл: движок поставил `reply_private_dm`, Radar его отклонил.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store, self.settings = make_env(Path(self.tmp.name))
+        accounts_mod.sync(self.store, SNAPSHOT + [CHANNEL_ACCOUNT])
+        limits = self.settings.limits
+        limits.per_account_visible_interval_sec = 0
+        limits.send_window_start_hour = 0
+        limits.send_window_end_hour = 24
+        limits.send_weekdays = (0, 1, 2, 3, 4, 5, 6)
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, surface, state, "
+            "created_at, updated_at) "
+            "VALUES('ch1', 814, '@armavir_auto23', 'channel_dm', 'open', ?, ?)",
+            (now(), now()))
+        self.add_inbound(CHANNEL_INBOUND_RAW)
+        self.store.commit()
+        dispatcher.arm(self.settings, True)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add_inbound(self, raw, inbound_id=73972):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, peer_tg_id, sender_tg_id, tg_message_id, text, "
+            "sent_at, raw, created_at) "
+            "VALUES(?,814,'channel_dm','@armavir_auto23','armavir_auto23',"
+            "1073872131745,3872131745,3,'Покажите',?,?,?)",
+            (inbound_id, now(), json.dumps(raw), now()))
+        self.store.commit()
+
+    # -- маршрут ---------------------------------------------------------
+
+    def test_channel_inbound_is_answered_with_the_channel_action(self):
+        result = replies.queue_reply(self.store, text="Показываю", thread_id="ch1")
+        task = self.store.one("SELECT action, params FROM tasks WHERE id = ?",
+                              (result["task"],))
+        self.assertEqual(task["action"], "reply_channel_dm")
+        params = json.loads(task["params"])
+        self.assertEqual(params["username"], "armavir_auto23")
+        self.assertEqual(params["target_channel_tg_id"], 3872131745)
+        self.assertEqual(params["target_monoforum_tg_id"], 1073872131745)
+        self.assertEqual(params["text"], "Показываю")
+        # У `send_channel_dm` привязки к входящему нет — и слать её нельзя:
+        # Radar отклонит команду по неизвестному параметру.
+        self.assertNotIn("inbound_notification_id", params)
+
+    def test_radar_receives_the_action_it_knows(self):
+        replies.queue_reply(self.store, text="Показываю", thread_id="ch1")
+        bridge = FakeEnqueueBridge()
+        result = run_dispatch(self.store, self.settings, bridge, confirm=True)
+        self.assertEqual(result["dispatched"], 1, result)
+        _, request = bridge.calls[0]
+        self.assertEqual(request["action"], "send_channel_dm")
+
+    def test_private_inbound_still_uses_the_private_reply(self):
+        route = replies.reply_route("private_dm")
+        self.assertEqual(route.action, "reply_private_dm")
+        self.assertEqual(catalog.ACTIONS[route.action].wire_name,
+                         "reply_private_dm")
+
+    def test_unknown_surface_is_refused(self):
+        for surface in ("public_chat", "", None):
+            with self.subTest(surface), self.assertRaises(replies.ReplyError):
+                replies.reply_route(surface)
+
+    # -- темп и бюджет ---------------------------------------------------
+
+    def test_channel_reply_is_paced_as_a_reply_not_as_a_campaign(self):
+        """Иначе человеку, написавшему в субботу, ответили бы в понедельник:
+        у рассылки пауза полчаса, окно 10–21 и только будни."""
+        self.assertEqual(
+            dispatcher.cadence_of({"action": "reply_channel_dm"}),
+            dispatcher.CADENCE_REPLY)
+        self.assertEqual(
+            dispatcher.cadence_of({"action": "send_channel_dm"}),
+            dispatcher.CADENCE_OUTREACH)
+
+    def test_a_channel_reply_does_not_eat_the_campaign_budget(self):
+        replies.queue_reply(self.store, text="Показываю", thread_id="ch1")
+        run_dispatch(self.store, self.settings, FakeEnqueueBridge(), confirm=True)
+        self.assertEqual(
+            dispatcher.sent_today(self.store, 814, dispatcher.CADENCE_OUTREACH), 0)
+        self.assertEqual(
+            dispatcher.sent_today(self.store, 814, dispatcher.CADENCE_REPLY), 1)
+
+    # -- происхождение цели ----------------------------------------------
+
+    def test_target_is_taken_only_from_a_trusted_radar_fact(self):
+        """У `send_channel_dm` адресата задаём мы, и Radar не может, как в
+        личке, перепроверить нас своим же фактом. Ошибка тут пишет в чужой
+        канал, поэтому каждое расхождение — отказ."""
+        broken = {
+            "чужая схема": {"schema": "что-то другое"},
+            "не та поверхность": {"surface": "private_dm"},
+            "не тот тип собеседника": {"peer": {**CHANNEL_INBOUND_RAW["peer"],
+                                                "type": "user"}},
+            "имя канала разошлось": {"peer": {**CHANNEL_INBOUND_RAW["peer"],
+                                              "username": "someone_else"}},
+            "monoforum не сходится": {"peer": {**CHANNEL_INBOUND_RAW["peer"],
+                                               "tg_id": 999}},
+            "нет monoforum": {"peer": {k: v for k, v
+                                       in CHANNEL_INBOUND_RAW["peer"].items()
+                                       if k != "monoforum_tg_id"}},
+            "чужой аккаунт": {"account_id": 999},
+            "нет следа прошлой команды": {"correlation": {}},
+        }
+        for name, patch in broken.items():
+            with self.subTest(name):
+                raw = {**CHANNEL_INBOUND_RAW, **patch}
+                with self.assertRaises(replies.ReplyError):
+                    replies.channel_reply_params({
+                        "raw": json.dumps(raw),
+                        "peer_username": "armavir_auto23",
+                        "peer_tg_id": 1073872131745,
+                        "account_id": 814,
+                    })
+
+    def test_a_refused_target_queues_nothing(self):
+        self.store.execute("DELETE FROM inbound WHERE id = 73972")
+        self.add_inbound({**CHANNEL_INBOUND_RAW, "correlation": {}})
+        with self.assertRaises(replies.ReplyError):
+            replies.queue_reply(self.store, text="Показываю", thread_id="ch1")
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM tasks")["n"], 0)
+
+
 class ReplyTests(unittest.TestCase):
     """Ответ адресуется входящему, а не username, и слушается тех же ворот."""
 

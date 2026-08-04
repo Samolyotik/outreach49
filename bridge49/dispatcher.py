@@ -798,7 +798,9 @@ async def _dispatch_armed(
                 if task.get("expires_at") else None
             )
             request = build_request(
-                action=task["action"],
+                # Именно проводное имя: `reply_channel_dm` — наше, для темпа и
+                # бюджета, а Radar такого действия не знает.
+                action=action.wire_name,
                 params=task["params"],
                 mode=task["mode"],
                 request_id=request_id,

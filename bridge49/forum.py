@@ -56,6 +56,7 @@ SURFACE = {
     "send_channel_dm": "личка канала",
     "send_public_chat_message": "публичный чат",
     "reply_private_dm": "ответ в личке",
+    "reply_channel_dm": "ответ в личке канала",
 }
 
 
@@ -80,7 +81,8 @@ SENT_SQL = (
     "  FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id "
     " WHERE t.finished_at IS NOT NULL AND t.finished_at > ? "
     "   AND t.action IN ('send_private_dm', 'send_channel_dm', "
-    "                    'send_public_chat_message', 'reply_private_dm') "
+    "                    'send_public_chat_message', 'reply_private_dm', "
+    "                    'reply_channel_dm') "
     " ORDER BY t.finished_at LIMIT ?"
 )
 
