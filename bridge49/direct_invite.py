@@ -344,6 +344,7 @@ class StartBotClient:
         display_name: str | None = None,
         validity_days: int = 7,
         at: datetime | None = None,
+        technical_test: bool = False,
     ) -> CreatedInvite:
         if not str(request_id).strip():
             raise DirectInviteError("request_id обязателен: он и есть идемпотентность")
@@ -362,7 +363,13 @@ class StartBotClient:
         payload = {
             "invite_id": invite_id,
             "source_system": "tg_radar_outreach",
-            "source_entity_type": "direct_free_test_invite",
+            # Сторона StartBot ведёт учёт выданных доступов, и проверочный
+            # выпуск не должен попадать в него как настоящий. Флаг метит
+            # заявку технической — так же, как это делал прежний контур.
+            "source_entity_type": (
+                "technical_integration_test" if technical_test
+                else "direct_free_test_invite"
+            ),
             "source_entity_id": f"direct-free-test:{request_id}"[:128],
             "source_conversation_id": str(source_conversation_id)[:128],
             "source_channel": source_channel,
@@ -375,7 +382,10 @@ class StartBotClient:
             "expires_at": (
                 current + timedelta(days=int(validity_days))
             ).isoformat(),
-            "metadata": {"signal_type": "direct_free_test"},
+            "metadata": {
+                "signal_type": "codex_smoke" if technical_test
+                else "direct_free_test"
+            },
         }
         response = _request_json(
             "POST",
