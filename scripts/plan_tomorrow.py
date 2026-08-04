@@ -49,8 +49,17 @@ MSK = timezone(timedelta(hours=3))
 #: Минимальный разрыв между двумя сообщениями одного аккаунта.
 MIN_ACCOUNT_GAP_MIN = 45
 
-#: Доля шага, на которую слот может сдвинуться в любую сторону.
-JITTER_RATIO = 0.35
+#: Насколько своя у каждого аккаунта кромка окна: сдвиг первого и
+#: последнего слота внутрь, 0–40 минут по хешу.
+EDGE_MARGIN_MIN = 40
+
+#: Доля своей части окна, на которую слот может сдвинуться в любую сторону.
+#:
+#: Больше половины — намеренно: при 0.5 слот в худшем случае лишь дотягивается
+#: до края соседней части, и порядок сообщений внутри дня остаётся заранее
+#: известным. За половиной части начинают перекрываться, соседи меняются
+#: местами, и раскладка перестаёт читаться как расписание.
+JITTER_RATIO = 0.75
 
 #: Роль → чем она пишет и из какого пула берёт цели. Пул берётся из разведки:
 #: канал или чат попадает сюда, только если проверка прошла успешно и мы туда
@@ -121,16 +130,18 @@ def debt(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def jitter_minutes(seed: str, step_min: float) -> float:
-    """Детерминированный сдвиг слота в пределах ±JITTER_RATIO шага."""
+def jitter_minutes(seed: str, step_min: float, *,
+                   ratio: float = JITTER_RATIO) -> float:
+    """Детерминированный сдвиг слота в пределах ±ratio доли."""
     digest = hashlib.sha256(seed.encode("utf-8")).digest()
     unit = int.from_bytes(digest[:8], "big") / float(1 << 64)  # [0, 1)
-    return (unit * 2 - 1) * JITTER_RATIO * step_min
+    return (unit * 2 - 1) * ratio * step_min
 
 
 def build(db: Path, *, date: str, per_account: int,
           from_hour: int, to_hour: int,
-          dm_pool: list[dict] | None = None) -> dict:
+          dm_pool: list[dict] | None = None,
+          jitter: float = JITTER_RATIO) -> dict:
     conn = connect(db)
     try:
         accounts = ready_accounts(conn)
@@ -214,19 +225,42 @@ def build(db: Path, *, date: str, per_account: int,
         share = window_min / len(items)
         # Своя фаза у каждого аккаунта: без неё все начинали бы день в один и
         # тот же момент своей первой доли.
-        phase = jitter_minutes(f"{date}|фаза|{acc}", share) * 0.5
-        previous: datetime | None = None
-        for index, item in enumerate(items):
-            seed = f"{date}|{acc}|{item.get('кому')}|{index}"
-            centre = (index + 0.5) * share + phase
-            minute = centre + jitter_minutes(seed, share)
+        phase = jitter_minutes(f"{date}|фаза|{acc}", share, ratio=0.5)
+        # Джиттер шире половины доли, поэтому соседние слоты перекрываются и
+        # могут поменяться местами: порядок внутри дня перестаёт быть заранее
+        # известным. Из-за этого слоты сортируются ПОСЛЕ сдвига, а не до.
+        raw = sorted(
+            (index + 0.5) * share + phase
+            + jitter_minutes(f"{date}|{acc}|{item.get('кому')}|{index}", share,
+                             ratio=jitter)
+            for index, item in enumerate(items)
+        )
+        # У каждого аккаунта своя кромка окна. Без неё жёсткий клип сваливает
+        # всё, что вышло за край, ровно на границу: в прогоне 05.08 семь
+        # аккаунтов писали в 21:00 секунда в секунду — сговор виднее сетки.
+        head = abs(jitter_minutes(f"{date}|голова|{acc}", EDGE_MARGIN_MIN,
+                                  ratio=1.0))
+        tail = abs(jitter_minutes(f"{date}|хвост|{acc}", EDGE_MARGIN_MIN,
+                                  ratio=1.0))
+        low, high = head, max(head + MIN_ACCOUNT_GAP_MIN, window_min - tail)
+        minutes = [max(low, min(high, value)) for value in raw]
+        # Проход вперёд разводит слипшиеся слоты, проход назад возвращает в
+        # окно то, что вперёд из него вытолкнуло. Без второго прохода хвост
+        # упирается в край и складывается там кучей: в прогоне 05.08 на 21:00
+        # сваливалось семь сообщений сразу.
+        for index in range(1, len(minutes)):
+            minutes[index] = max(
+                minutes[index], minutes[index - 1] + MIN_ACCOUNT_GAP_MIN)
+        for index in range(len(minutes) - 2, -1, -1):
+            minutes[index] = min(
+                minutes[index], minutes[index + 1] - MIN_ACCOUNT_GAP_MIN)
+        overflow = minutes[-1] - high if minutes else 0.0
+        if overflow > 0:
+            minutes = [value - overflow for value in minutes]
+        minutes = [max(0.0, min(window_min, value)) for value in minutes]  # noqa: E501
+
+        for item, minute in zip(items, minutes):
             moment = start + timedelta(minutes=minute)
-            if previous is not None:
-                earliest = previous + timedelta(minutes=MIN_ACCOUNT_GAP_MIN)
-                if moment < earliest:
-                    moment = earliest
-            moment = max(start, min(moment, finish))
-            previous = moment
             out.append({**item, "аккаунт": acc,
                         "слот": moment.strftime("%H:%M"),
                         "слот_utc": moment.astimezone(timezone.utc).isoformat()})
@@ -281,6 +315,8 @@ def main() -> int:
     parser.add_argument("--to-hour", type=int, default=21)
     parser.add_argument("--dm-candidates",
                         help="файл от export_b140_candidates.py")
+    parser.add_argument("--jitter", type=float, default=JITTER_RATIO,
+                        help="доля части окна, 0.75 по умолчанию")
     parser.add_argument("--out")
     args = parser.parse_args()
 
@@ -292,7 +328,7 @@ def main() -> int:
 
     plan = build(Path(args.db), date=args.date, per_account=args.per_account,
                  from_hour=args.from_hour, to_hour=args.to_hour,
-                 dm_pool=dm_pool)
+                 dm_pool=dm_pool, jitter=args.jitter)
     summarize(plan)
     if args.out:
         Path(args.out).write_text(
