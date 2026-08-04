@@ -1,0 +1,14 @@
+[Unit]
+Description=outreach49 зеркало в группу каждую минуту
+
+[Timer]
+# Минута — это про видимость, а не про темп: человек смотрит в группу и хочет
+# видеть переписку примерно тогда же, когда она идёт. Пустой проход дешёвый,
+# без новых событий он не делает ни одного запроса в Telegram.
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+RandomizedDelaySec=15
+
+[Install]
+WantedBy=timers.target

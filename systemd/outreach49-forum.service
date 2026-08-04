@@ -1,0 +1,16 @@
+[Unit]
+Description=outreach49 — зеркалить переписку в рабочую группу
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Реквизиты бота и id группы живут у прежнего контура. Файл переиспользуем как
+# есть: своя копия токена неминуемо разошлась бы с оригиналом при ротации.
+EnvironmentFile=/etc/tgradar-outreach/production.env
+ExecStart=/opt/outreach49/bin/bridge49 forum --limit 30
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

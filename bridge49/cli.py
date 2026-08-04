@@ -13,7 +13,8 @@ from pathlib import Path
 
 from . import accounts as accounts_mod
 from . import (alerts, autoreply, catalog, config, direct_invite, dispatcher,
-               entities, planner, pollers, replies, report, research, watchdog)
+               entities, forum, planner, pollers, replies, report, research,
+               watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -750,6 +751,28 @@ def cmd_invites(args) -> int:
         return 0
 
 
+def cmd_forum(args) -> int:
+    """Зеркало переписки в рабочую группу."""
+    settings = _settings(args)
+    if not forum.enabled():
+        print(report.warn(
+            "зеркало выключено: нужны OUTREACH_MANAGER_TELEGRAM_ENABLED=1, "
+            "токен бота и id чата"))
+        return 1
+    if args.test:
+        try:
+            result = forum.send("Проверка связи: bridge49 подключён к группе.")
+        except forum.ForumError as exc:
+            print(report.bad(str(exc)))
+            return 1
+        print(report.good("отправлено, message_id=%s" % result.get("message_id")))
+        return 0
+    with _store(settings) as store:
+        print(report.kv(sorted(forum.run(store, limit=args.limit,
+                                         actor=args.actor).items())))
+    return 0
+
+
 def cmd_arm(args) -> int:
     settings = _settings(args)
     message = dispatcher.arm(settings, args.state == "on", actor=args.actor)
@@ -1235,6 +1258,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hold", action="store_true",
                    help="только выпустить ссылки, доставку не отправлять")
     p.set_defaults(func=cmd_invites)
+
+    p = sub.add_parser("forum", help="зеркалить переписку в рабочую группу")
+    p.add_argument("--limit", type=int, default=30)
+    p.add_argument("--test", action="store_true",
+                   help="отправить одно проверочное сообщение и выйти")
+    p.set_defaults(func=cmd_forum)
 
     p = sub.add_parser("poll", help="забрать результаты и входящие")
     p.add_argument("what", nargs="?", default="all",
