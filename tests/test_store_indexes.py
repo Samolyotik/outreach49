@@ -48,19 +48,38 @@ class TaskUniquenessTests(unittest.TestCase):
             (task_id, action, now(), now(), now()))
         self.store.commit()
 
+    def close(self, task_id: str) -> None:
+        self.store.execute("UPDATE tasks SET state='done' WHERE id=?", (task_id,))
+        self.store.commit()
+
     def test_second_reply_in_a_private_dm_is_allowed(self):
+        """Ответить можно снова — после того, как предыдущий ушёл."""
         self.add_task("t1", "reply_private_dm")
+        self.close("t1")
         self.add_task("t2", "reply_private_dm")
 
     def test_second_reply_in_a_channel_dm_is_allowed(self):
         """Тот же разговор, другая поверхность — и то же право ответить.
 
-        Пока `reply_channel_dm` оставался под индексом, машина отвечала
-        человеку в канале ровно один раз за всю жизнь диалога, а дальше
-        заводила карточку. Снаружи это выглядело не как отказ, а как молчание.
+        Пока `reply_channel_dm` оставался под правилом про рассылку, машина
+        отвечала человеку в канале ровно один раз за всю жизнь диалога, а
+        дальше заводила карточку. Снаружи это выглядело не как отказ, а как
+        молчание.
+
+        Правил тут два, и они не спорят. Правило про рассылку ответов не
+        касается вовсе; отдельный рубеж не даёт держать ДВА незакрытых ответа
+        одновременно. Закрытый предыдущий места не занимает — иначе разговор
+        обрывался бы на первой же реплике.
         """
         self.add_task("t1", "reply_channel_dm")
+        self.close("t1")
         self.add_task("t2", "reply_channel_dm")
+
+    def test_two_open_replies_are_still_refused(self):
+        """Граница между двумя правилами: незакрытый ответ должен быть один."""
+        self.add_task("t1", "reply_channel_dm")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.add_task("t2", "reply_channel_dm")
 
     def test_second_first_touch_is_still_refused(self):
         """Исключение для ответов не должно распускать правило про рассылку."""

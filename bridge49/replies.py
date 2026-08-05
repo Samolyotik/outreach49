@@ -20,6 +20,7 @@ username: username — алиас, он меняется, а уведомлен�
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
@@ -517,15 +518,31 @@ def queue_reply(
         }
 
     task_id = new_id("task")
-    store.execute(
-        "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
-        "params, mode, scheduled_at, expires_at, state, review_reason, "
-        "created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,NULL,'planned',?,?,?)",
-        (task_id, campaign_id, contact_id, int(thread["account_id"]),
-         route.action, dumps(params),
-         mode, scheduled_at or now(), review_reason or None, now(), now()),
-    )
+    try:
+        store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, expires_at, state, review_reason, "
+            "created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,NULL,'planned',?,?,?)",
+            (task_id, campaign_id, contact_id, int(thread["account_id"]),
+             route.action, dumps(params),
+             mode, scheduled_at or now(), review_reason or None, now(), now()),
+        )
+    except sqlite3.IntegrityError as exc:
+        # Проверка выше неатомарна: между «посмотрел» и «вставил» другой
+        # процесс мог поставить свой ответ. Пока в кампанию пишет один
+        # oneshot-юнит, попасть сюда неоткуда; когда разбор входящих станет
+        # постоянным процессом с параллельностью — станет откуда.
+        #
+        # Проигранная гонка обязана читаться так же, как замеченный дубль:
+        # вызывающему нужно знать, что ответ уже поставлен, а не разбирать
+        # ошибку базы. Иначе автоответ заведёт менеджеру карточку о
+        # несуществующем сбое — ровно как это было 04.08 с ложным отказом.
+        store.conn.rollback()
+        raise ReplyError(
+            "этому собеседнику уже поставлен ответ (гонка при постановке); "
+            "дождитесь отправки или снимите задачу"
+        ) from exc
     store.log(actor, "reply.queue", task_id,
               f"acc={thread['account_id']} peer={thread['peer_key']} "
               f"{route.action}")

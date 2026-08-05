@@ -320,9 +320,32 @@ CREATE INDEX IF NOT EXISTS idx_events_at ON events(at DESC);
 #: Набор имён обязан совпадать с ``replies.REPLY_ACTIONS`` — каноном «что у нас
 #: считается ответом». Импортировать его сюда нельзя (``replies`` сам стоит на
 #: ``store``), поэтому совпадение стережёт тест.
-_TASKS_UNIQUE_WHERE = "action NOT IN ('reply_private_dm', 'reply_channel_dm')"
+_REPLY_ACTIONS_SQL = "'reply_private_dm', 'reply_channel_dm'"
+
+_TASKS_UNIQUE_WHERE = f"action NOT IN ({_REPLY_ACTIONS_SQL})"
 
 _TASKS_UNIQUE_INDEX_NAME = "idx_tasks_campaign_contact"
+
+#: Второй индекс — про обратное: ответы из правила про рассылку исключены, но
+#: НЕЗАКРЫТЫЙ ответ у собеседника должен быть один.
+#:
+#: Проверка на это есть и в коде, но она неатомарна: между «посмотрел, нет ли
+#: уже поставленного» и «вставил» другой процесс успевает вставить свой. Пока
+#: в кампанию ответов пишет один oneshot-юнит, второго процесса просто нет —
+#: но разбор входящих скоро станет постоянным процессом с параллельностью, и
+#: тогда окно откроется по-настоящему. Индекс закрывает его на уровне базы,
+#: где обойти его не сможет никакой будущий вызывающий.
+#:
+#: Ключ тот же, что у проверки в коде: пара «кампания и контакт». Состояния —
+#: только незакрытые: отправленный, снятый и пропущенный ответы места не
+#: занимают, иначе второй ответ в разговоре стал бы невозможен.
+_OPEN_REPLY_INDEX_NAME = "idx_tasks_open_reply"
+_OPEN_REPLY_INDEX_SQL = (
+    f"CREATE UNIQUE INDEX {_OPEN_REPLY_INDEX_NAME} "
+    "ON tasks(campaign_id, contact_id) "
+    "WHERE state IN ('planned', 'queued') "
+    f"AND action IN ({_REPLY_ACTIONS_SQL})"
+)
 
 #: Оператор целиком, а не одно условие. Сравнивать надо всё правило: индекс с
 #: верным условием, но неуникальный или по другим колонкам, — это ровно тот же
@@ -420,14 +443,25 @@ class Store:
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
-        """Переделать индексы, которые изменились после создания базы.
+        """Привести индексы, которые нельзя завести одним CREATE IF NOT EXISTS.
+
+        Каждый следующий индекс должен заводиться отдельным вызовом. Ранний
+        выход из общего тела пропустил бы всё, что стоит ниже, — и второй
+        рубеж не появился бы ни в одной базе, где первый уже актуален. Ровно
+        так и вышло с первого раза.
+        """
+        self._ensure_tasks_unique_index()
+        self._ensure_open_reply_index()
+
+    def _ensure_tasks_unique_index(self) -> None:
+        """Одно касание на контакт в кампании, кроме ответов.
 
         ``CREATE INDEX IF NOT EXISTS`` существующий индекс не трогает, поэтому
         превращение сплошной уникальности в частичную приходится делать руками:
         иначе в уже живущей базе останется старое правило, и второй ответ
         одному человеку так и будет падать.
 
-        Сравнивать надо само условие, а не наличие слова ``WHERE``. Проверка
+        Сравнивать надо само правило, а не наличие слова ``WHERE``. Проверка
         «частичный ли индекс» отвечает «да» на любое условие, включая
         устаревшее, — и вторая правка этого же правила молча не доезжает до
         живых баз. Ровно это и случилось с ответами в каналах.
@@ -466,16 +500,57 @@ class Store:
             raise
         self.conn.execute("COMMIT")
 
+    def _ensure_open_reply_index(self) -> None:
+        """Завести нижний рубеж против двух незакрытых ответов.
+
+        Отдельно от первого индекса и с другим отношением к неудаче. Если в
+        базе уже лежит пара незакрытых ответов одному человеку, создание
+        упрётся в неё — и это ровно тот случай, от которого индекс защищает.
+        Чинить данные молча нельзя: какой из двух ответов лишний, знает
+        человек, а не миграция. Но и ронять весь контур нельзя тем более —
+        без этого индекса мы там же, где были вчера, а падение при открытии
+        базы останавливает вообще всё.
+
+        Поэтому неудача записывается и не мешает работать: контур продолжает
+        жить на прикладной проверке, а факт отсутствия рубежа виден в журнале.
+        """
+        if self._index_is_current(_OPEN_REPLY_INDEX_NAME, _OPEN_REPLY_INDEX_SQL):
+            return
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not self._index_is_current(
+                _OPEN_REPLY_INDEX_NAME, _OPEN_REPLY_INDEX_SQL
+            ):
+                self.conn.execute(
+                    f"DROP INDEX IF EXISTS {_OPEN_REPLY_INDEX_NAME}")
+                self.conn.execute(_OPEN_REPLY_INDEX_SQL)
+        except sqlite3.IntegrityError as exc:
+            self.conn.execute("ROLLBACK")
+            self.log("store", "index.open_reply_refused", _OPEN_REPLY_INDEX_NAME,
+                     str(exc)[:300])
+            self.conn.commit()
+            return
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        self.conn.execute("COMMIT")
+
     def _tasks_index_is_current(self) -> bool:
+        return self._index_is_current(
+            _TASKS_UNIQUE_INDEX_NAME, _TASKS_UNIQUE_INDEX_SQL)
+
+    def _index_is_current(self, name: str, wanted_sql: str) -> bool:
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master "
             " WHERE type = 'index' AND name = ?",
-            (_TASKS_UNIQUE_INDEX_NAME,),
+            (name,),
         ).fetchone()
         if row is None:
             return False
         return (_normalized_index_sql(row["sql"])
-                == _normalized_index_sql(_TASKS_UNIQUE_INDEX_SQL))
+                == _normalized_index_sql(wanted_sql))
 
     # -- базовые операции ---------------------------------------------------
 
