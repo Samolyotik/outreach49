@@ -18,8 +18,11 @@ from typing import Any
 
 from . import alerts
 from .config import Settings
-from .radar import RadarBridge
-from .store import Store, dumps, now
+from .store import Store, dumps, loads, now
+
+# Мост тянет за собой драйвер Postgres, а проверки состояния его не требуют:
+# они читают нашу же базу. Импорт спрятан в единственную проверку, которой он
+# нужен, чтобы остальные оставались проверяемы там, где драйвера нет.
 
 CRITICAL = "critical"
 HIGH = "high"
@@ -37,6 +40,19 @@ INBOUND_LAG_SEC = 300
 HANDOFF_STALE_HOURS = 24
 #: Задача, застрявшая в очереди Radar без исхода.
 QUEUED_STALE_HOURS = 6
+
+#: Зоны, у которых бывает постоянный процесс. Смотреть на них должен именно
+#: сторож: он сам oneshot и потому способен доложить о собственной смерти, а
+#: демон о своей — нет.
+DAEMON_ZONES = ("ingest",)
+
+#: Молчание процесса. Шаг приёма — секунды, поэтому две минуты тишины это уже
+#: не разброс расписания, а остановка или зависание внутри круга.
+DAEMON_SILENCE_SEC = 120
+
+#: Сколько кругов подряд должно упасть, чтобы «процесс жив» перестало значить
+#: «всё хорошо». Одиночная помеха на сети — не повод будить человека.
+DAEMON_FAILURE_STREAK = 3
 
 
 @dataclass
@@ -120,6 +136,55 @@ def check_poller(store: Store, report: Report) -> None:
         )
 
 
+def check_daemons(store: Store, report: Report) -> None:
+    """Живы ли постоянные процессы — и работают ли, а не просто существуют.
+
+    До появления демонов такого класса отказа не было вовсе: разовый прогон
+    либо отработал, либо нет, и об этом знал systemd. Постоянный процесс
+    добавляет третье состояние — жив, но не двигается, — и снаружи оно
+    выглядит здоровее упавшего таймера.
+
+    Две развилки здесь важнее самих порогов.
+
+    Отметки нет вовсе — молчим: на этой машине зону никогда не поднимали, и
+    жаловаться не на что. Отметка говорит «остановлен» — молчим тоже: процесс
+    ушёл по-хорошему, то есть его остановил человек. Автоматика не должна
+    поднимать тревогу о том, что выключено намеренно, иначе она начинает
+    спорить с решением человека вместо того, чтобы охранять его.
+    """
+    for zone in DAEMON_ZONES:
+        raw = store.get_state(f"daemon:{zone}:beat")
+        if not raw:
+            continue
+        beat = loads(raw, {})
+        if not isinstance(beat, dict) or not beat.get("running"):
+            continue
+
+        age = _age_seconds(beat.get("at"))
+        report.facts[f"daemon_{zone}_age_sec"] = None if age is None else int(age)
+        if age is None or age > DAEMON_SILENCE_SEC:
+            detail = (
+                "отметка живости не читается"
+                if age is None
+                else f"молчит {int(age)} с (порог {DAEMON_SILENCE_SEC} с)"
+            )
+            report.findings.append(
+                Finding(f"процесс {zone}", CRITICAL,
+                        f"{detail} — процесс умер или завис внутри круга")
+            )
+            continue
+
+        streak = int(beat.get("consecutive_failures") or 0)
+        if streak >= DAEMON_FAILURE_STREAK:
+            report.findings.append(
+                Finding(
+                    f"процесс {zone}", HIGH,
+                    f"жив, но {streak} кругов подряд падают: "
+                    f"{beat.get('last_error') or 'причина не записана'}",
+                )
+            )
+
+
 def check_handoffs(store: Store, report: Report) -> None:
     """Карточки, до которых никто не дошёл. Ответ клиента протухает быстро."""
     edge = (
@@ -186,6 +251,8 @@ async def check_bridge(store: Store, settings: Settings, report: Report) -> None
         )
         return
     try:
+        from .radar import RadarBridge
+
         async with RadarBridge(settings.dsn) as bridge:
             health = await bridge.health()
     except Exception as exc:  # noqa: BLE001 — важен сам факт недоступности
@@ -276,6 +343,7 @@ async def run(
     """Прогнать все проверки, сохранить результат и сообщить об изменениях."""
     report = Report(checked_at=now())
     check_poller(store, report)
+    check_daemons(store, report)
     check_handoffs(store, report)
     check_stuck_tasks(store, report)
     check_fleet(store, settings, report)

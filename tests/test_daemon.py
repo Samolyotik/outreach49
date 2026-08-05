@@ -11,13 +11,14 @@ import asyncio
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bridge49 import config, daemon  # noqa: E402
-from bridge49.store import Store, loads  # noqa: E402
+from bridge49 import config, daemon, watchdog  # noqa: E402
+from bridge49.store import Store, loads, now  # noqa: E402
 
 
 def make_settings(home: Path):
@@ -228,6 +229,155 @@ class ZoneLockTests(unittest.TestCase):
                 raise ValueError("падение внутри зоны")
         with daemon.zone_lock(self.settings, daemon.ZONE_INGEST):
             pass
+
+
+class WatchdogSeesTheDaemonTests(unittest.TestCase):
+    """Что именно сторож обязан заметить, а о чём обязан молчать.
+
+    Пороги здесь второстепенны. Существенны две развилки: тревога о том, что
+    человек выключил намеренно, — это спор с его решением, а молчание о том,
+    что умерло само, — это ровно та поломка, ради которой сторож и заведён.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.settings = make_settings(self.home)
+        self.store = Store(self.settings.db_path)
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def beat(self, **payload) -> None:
+        from bridge49.store import dumps
+        self.store.set_state(
+            daemon.beat_key(daemon.ZONE_INGEST), dumps(payload))
+        self.store.commit()
+
+    def findings(self) -> list:
+        report = watchdog.Report(checked_at=now())
+        watchdog.check_daemons(self.store, report)
+        return report.findings
+
+    def test_zone_never_started_here_is_not_a_problem(self):
+        self.assertEqual(self.findings(), [])
+
+    def test_cleanly_stopped_daemon_stays_quiet(self):
+        """Остановленное человеком не будят. Даже если стоит давно."""
+        self.beat(running=False, at="2020-01-01T00:00:00+00:00")
+        self.assertEqual(self.findings(), [])
+
+    def test_fresh_beat_is_quiet(self):
+        self.beat(running=True, at=now(), consecutive_failures=0)
+        self.assertEqual(self.findings(), [])
+
+    def test_silent_daemon_raises_critical(self):
+        old = datetime.now(timezone.utc) - timedelta(
+            seconds=watchdog.DAEMON_SILENCE_SEC + 60)
+        self.beat(running=True, at=old.isoformat(), consecutive_failures=0)
+        found = self.findings()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, watchdog.CRITICAL)
+        self.assertIn("молчит", found[0].detail)
+
+    def test_alive_but_failing_is_the_new_class_of_trouble(self):
+        """Процесс жив и отмечается, но каждый круг падает.
+
+        До постоянных процессов такого состояния не существовало: разовый
+        прогон либо отработал, либо нет. Снаружи оно выглядит здоровее
+        упавшего таймера, поэтому проверять его надо отдельно.
+        """
+        self.beat(running=True, at=now(),
+                  consecutive_failures=watchdog.DAEMON_FAILURE_STREAK,
+                  last_error="RuntimeError: мост недоступен")
+        found = self.findings()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, watchdog.HIGH)
+        self.assertIn("мост недоступен", found[0].detail)
+
+    def test_single_hiccup_does_not_wake_anybody(self):
+        self.beat(running=True, at=now(), consecutive_failures=1,
+                  last_error="разовая помеха")
+        self.assertEqual(self.findings(), [])
+
+    def test_unreadable_beat_is_treated_as_trouble(self):
+        """Отметка есть, но времени в ней нет — считать это нормой нельзя."""
+        self.beat(running=True, consecutive_failures=0)
+        found = self.findings()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, watchdog.CRITICAL)
+
+    def test_broken_json_does_not_break_the_watchdog(self):
+        self.store.set_state(daemon.beat_key(daemon.ZONE_INGEST), "{не json")
+        self.store.commit()
+        self.assertEqual(self.findings(), [])
+
+
+class DaemonAndWatchdogTogetherTests(unittest.IsolatedAsyncioTestCase):
+    """Сквозная проверка: процесс отработал и ушёл — сторож молчит."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = Path(self.tmp.name)
+        self.settings = make_settings(self.home)
+        Store(self.settings.db_path).close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    async def test_clean_exit_leaves_no_alarm_behind(self):
+        await daemon.run_ingest(
+            self.settings, step=0.0, forum_step=0.0, max_iterations=1,
+            reload_settings=lambda: self.settings,
+            connect=lambda settings: _ok(_FakeBridge()),
+            poll_results=lambda *a: _ok({}),
+            poll_inbound=lambda *a: _ok({}),
+            mirror=lambda store, settings: {})
+
+        store = Store(self.settings.db_path)
+        try:
+            report = watchdog.Report(checked_at=now())
+            watchdog.check_daemons(store, report)
+            beat = loads(store.get_state(daemon.beat_key(daemon.ZONE_INGEST)), {})
+        finally:
+            store.close()
+        self.assertFalse(beat.get("running"), "уход должен быть помечен")
+        self.assertEqual(report.findings, [])
+
+    async def test_crash_leaves_the_daemon_marked_as_running(self):
+        """Умершее само обязано остаться помеченным живым — иначе тишина.
+
+        Сторож отличает «остановлен человеком» от «умер» только по этой
+        отметке. Если её ставить в любом исходе, падение станет неотличимо от
+        штатной остановки и тревоги не будет вовсе.
+        """
+        rounds = {"n": 0}
+
+        async def explode(store, settings, bridge):
+            # Первый круг проходит: процесс успевает отметиться живым, как в
+            # бою. Убиваем на втором — иначе проверялось бы падение на старте,
+            # где отметки ещё нет вовсе.
+            rounds["n"] += 1
+            if rounds["n"] > 1:
+                raise KeyboardInterrupt("убили посреди круга")
+            return {}
+
+        with self.assertRaises(KeyboardInterrupt):
+            await daemon.run_ingest(
+                self.settings, step=0.0, forum_step=0.0, max_iterations=5,
+                reload_settings=lambda: self.settings,
+                connect=lambda settings: _ok(_FakeBridge()),
+                poll_results=explode,
+                poll_inbound=lambda *a: _ok({}),
+                mirror=lambda store, settings: {})
+
+        store = Store(self.settings.db_path)
+        try:
+            beat = loads(store.get_state(daemon.beat_key(daemon.ZONE_INGEST)), {})
+        finally:
+            store.close()
+        self.assertTrue(beat.get("running"))
 
 
 async def _ok(payload):

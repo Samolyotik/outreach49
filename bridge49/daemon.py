@@ -211,6 +211,7 @@ async def run_ingest(
     store = Store(settings.db_path)
     bridge: object | None = None
     next_mirror = 0.0
+    stopped_cleanly = False
 
     try:
         while not stop.is_set():
@@ -258,8 +259,10 @@ async def run_ingest(
                     bridge = None
 
             heartbeat(store, ZONE_INGEST, {
+                "running": True,
                 "iterations": tally.iterations,
                 "failures": tally.failures,
+                "consecutive_failures": tally.consecutive_failures,
                 "last_error": tally.last_error,
                 "step": step,
             })
@@ -278,7 +281,23 @@ async def run_ingest(
                 await asyncio.wait_for(stop.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
+        stopped_cleanly = True
     finally:
+        # Уход по-хорошему помечается в отметке, и это не косметика: сторож
+        # обязан молчать про зону, которую человек остановил намеренно, и
+        # обязан кричать про ту, что умерла сама. Отличить одно от другого
+        # можно только здесь — по факту, что цикл дошёл до конца, а не был
+        # прерван исключением или убит.
+        if stopped_cleanly:
+            heartbeat(store, ZONE_INGEST, {
+                "running": False,
+                "iterations": tally.iterations,
+                "failures": tally.failures,
+                "consecutive_failures": tally.consecutive_failures,
+                "last_error": tally.last_error,
+                "step": step,
+            })
+            store.commit()
         if bridge is not None:
             try:
                 await bridge.close()
