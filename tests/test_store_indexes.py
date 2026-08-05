@@ -144,6 +144,120 @@ class IndexMigrationTests(unittest.TestCase):
         Store(self.path).close()
         self.assertEqual(self.index_sql(), before)
 
+    def test_index_of_the_wrong_shape_is_replaced(self):
+        """Условие верное, а сам индекс — нет.
+
+        Сравнивать одно лишь условие значит повторить починенную ошибку в
+        другом месте: неуникальный индекс или индекс по другим колонкам
+        прошёл бы за актуальный и остался бы навсегда.
+        """
+        Store(self.path).close()
+        conn = sqlite3.connect(self.path)
+        try:
+            conn.execute("DROP INDEX idx_tasks_campaign_contact")
+            conn.execute(
+                "CREATE INDEX idx_tasks_campaign_contact ON tasks(contact_id) "
+                " WHERE action NOT IN ('reply_private_dm', 'reply_channel_dm')")
+            conn.commit()
+        finally:
+            conn.close()
+        Store(self.path).close()
+        sql = self.index_sql()
+        self.assertIn("UNIQUE", sql)
+        self.assertIn("campaign_id, contact_id", sql)
+
+    def test_missing_index_is_created_without_a_drop(self):
+        """Кто-то уже снёс индекс — пересоздание не должно падать на DROP."""
+        Store(self.path).close()
+        conn = sqlite3.connect(self.path)
+        try:
+            conn.execute("DROP INDEX idx_tasks_campaign_contact")
+            conn.commit()
+        finally:
+            conn.close()
+        Store(self.path).close()
+        self.assertIn("reply_channel_dm", self.index_sql())
+
+    def test_stale_reader_does_not_migrate_twice(self):
+        """Тот, кто решил мигрировать по устаревшему чтению, не должен падать.
+
+        Естественную гонку поймать нельзя — окно между DROP и CREATE
+        микроскопическое, и в прогоне на двенадцать одновременных открытий она
+        не проявилась ни на прежней версии, ни на этой. Но она не про удачу, а
+        про устройство: раньше решение принималось по чтению ВНЕ замка, и в
+        худшем исходе база оставалась без индекса и с дублем — после чего
+        падало каждое следующее открытие.
+
+        Поэтому проверяется само свойство: решение перечитывается уже под
+        эксклюзивной записью. Здесь первое чтение подделано под устаревшее —
+        так выглядит процесс, который посмотрел на базу до чужой миграции.
+        """
+        Store(self.path).close()
+        wanted = self.index_sql()
+
+        store = Store.__new__(Store)
+        store.path = self.path
+        store.conn = sqlite3.connect(self.path, timeout=30)
+        store.conn.row_factory = sqlite3.Row
+        real = store._tasks_index_is_current
+        calls = {"n": 0}
+
+        def stale_first_time():
+            calls["n"] += 1
+            return False if calls["n"] == 1 else real()
+
+        store._tasks_index_is_current = stale_first_time
+        try:
+            store._ensure_indexes()   # не должно ни упасть, ни пересоздать
+            self.assertFalse(store.conn.in_transaction)
+        finally:
+            store.close()
+
+        self.assertGreaterEqual(calls["n"], 2, "перечитывания под замком не было")
+        self.assertEqual(self.index_sql(), wanted)
+
+    def test_migration_leaves_no_transaction_open(self):
+        """Незакрытая транзакция заперла бы писателей на busy_timeout."""
+        Store(self.path).close()
+        self.replace_index("action <> 'reply_private_dm'")
+        store = Store(self.path)
+        try:
+            self.assertFalse(store.conn.in_transaction)
+        finally:
+            store.close()
+
+
+class ReplyActionsAgreementTests(unittest.TestCase):
+    """Канон «что считается ответом» записан в четырёх местах.
+
+    Индекс исключает ответы из правила про рассылку, диспетчер снимает с них
+    защиту от повторного касания, планировщик не считает их исходящими. Все
+    четыре списка обязаны совпадать: разъедутся — и добавленный третий вид
+    ответа молча попадёт под правило, из которого его выводили.
+    """
+
+    def test_index_condition_matches_the_canonical_set(self):
+        from bridge49 import replies, store as store_mod
+
+        for action in replies.REPLY_ACTIONS:
+            self.assertIn(f"'{action}'", store_mod._TASKS_UNIQUE_WHERE,
+                          f"{action} считается ответом, но индекс его не знает")
+        listed = store_mod._TASKS_UNIQUE_WHERE.count("'") // 2
+        self.assertEqual(listed, len(replies.REPLY_ACTIONS),
+                         "в индексе перечислено не столько действий, "
+                         "сколько считается ответами")
+
+    def test_planner_copy_matches_too(self):
+        import importlib.util
+
+        from bridge49 import replies
+
+        spec = importlib.util.spec_from_file_location(
+            "plan_tomorrow", ROOT / "scripts" / "plan_tomorrow.py")
+        planner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(planner)
+        self.assertEqual(set(planner.REPLY_ACTIONS), set(replies.REPLY_ACTIONS))
+
 
 if __name__ == "__main__":
     unittest.main()

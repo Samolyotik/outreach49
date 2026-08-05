@@ -316,20 +316,34 @@ CREATE INDEX IF NOT EXISTS idx_events_at ON events(at DESC);
 #: что живёт в двух местах сразу: в схеме для новой базы и в пересоздании
 #: индекса для уже работающей. Разъедутся эти два места — и правило будет
 #: разным в зависимости от того, когда базу завели.
+#:
+#: Набор имён обязан совпадать с ``replies.REPLY_ACTIONS`` — каноном «что у нас
+#: считается ответом». Импортировать его сюда нельзя (``replies`` сам стоит на
+#: ``store``), поэтому совпадение стережёт тест.
 _TASKS_UNIQUE_WHERE = "action NOT IN ('reply_private_dm', 'reply_channel_dm')"
 
+_TASKS_UNIQUE_INDEX_NAME = "idx_tasks_campaign_contact"
 
-def _index_where(sql: str | None) -> str:
-    """Условие существующего индекса, приведённое к сравнимому виду.
+#: Оператор целиком, а не одно условие. Сравнивать надо всё правило: индекс с
+#: верным условием, но неуникальный или по другим колонкам, — это ровно тот же
+#: класс ошибки, что и починенный. Проверять одну грань правила из нескольких
+#: значит однажды пропустить остальные.
+_TASKS_UNIQUE_INDEX_SQL = (
+    f"CREATE UNIQUE INDEX {_TASKS_UNIQUE_INDEX_NAME} "
+    "ON tasks(campaign_id, contact_id) "
+    f"WHERE {_TASKS_UNIQUE_WHERE}"
+)
 
-    SQLite хранит текст запроса как его написали, вместе с переносами строк и
-    отступами. Сравнивать надо смысл, а не форматирование.
+
+def _normalized_index_sql(sql: str | None) -> str:
+    """Текст индекса, приведённый к сравнимому виду.
+
+    SQLite хранит запрос почти как его написали: переносы строк и отступы
+    остаются, а ``IF NOT EXISTS`` и хвостовая точка с запятой вырезаются.
+    Схема пишет индекс в три строки, пересоздание — в одну; смысл у них один.
     """
-    text = str(sql or "")
-    head, _, tail = text.partition("WHERE")
-    if not tail:
-        return ""
-    return " ".join(tail.split())
+    text = " ".join(str(sql or "").split())
+    return text.replace("INDEX IF NOT EXISTS ", "INDEX ").rstrip(";")
 
 
 def now() -> str:
@@ -418,23 +432,50 @@ class Store:
         устаревшее, — и вторая правка этого же правила молча не доезжает до
         живых баз. Ровно это и случилось с ответами в каналах.
         """
-        wanted = _TASKS_UNIQUE_WHERE
+        if self._tasks_index_is_current():
+            return
+
+        # Дальше — редкий путь, и он обязан быть неделимым.
+        #
+        # DDL в sqlite3 идёт в автокоммите: между DROP и CREATE есть окно, в
+        # котором индекса нет вовсе. Базу открывает каждая команда и каждый
+        # таймер — около одиннадцати открытий в минуту, причём systemd
+        # намеренно склеивает таймеры в одно пробуждение. В это окно попадают
+        # три исхода, и все три проверены вживую: второй DROP падает «нет
+        # такого индекса»; второй CREATE падает «индекс уже есть»; и худший —
+        # чужая вставка успевает пролезть без индекса, после чего CREATE
+        # падает уже навсегда, а вместе с ним каждое следующее открытие базы.
+        #
+        # Эксклюзивная запись закрывает все три: второй процесс дождётся
+        # своей очереди, перечитает состояние уже под замком и увидит, что
+        # работа сделана. А откат вернёт прежний индекс, если создание нового
+        # почему-то не удастся, — вместо базы, оставшейся вообще без правила.
+        if self.conn.in_transaction:
+            self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not self._tasks_index_is_current():
+                self.conn.execute(
+                    f"DROP INDEX IF EXISTS {_TASKS_UNIQUE_INDEX_NAME}")
+                # Новое условие строго уже прежнего: под индексом остаётся
+                # меньше строк, чем раньше. Значит создание не может упереться
+                # в уже существующие дубли и не требует предварительной чистки.
+                self.conn.execute(_TASKS_UNIQUE_INDEX_SQL)
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        self.conn.execute("COMMIT")
+
+    def _tasks_index_is_current(self) -> bool:
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master "
-            " WHERE type = 'index' AND name = 'idx_tasks_campaign_contact'"
+            " WHERE type = 'index' AND name = ?",
+            (_TASKS_UNIQUE_INDEX_NAME,),
         ).fetchone()
-        if row is not None and _index_where(row["sql"]) == wanted:
-            return
-        if row is not None:
-            self.conn.execute("DROP INDEX idx_tasks_campaign_contact")
-        # Новое условие строго шире прежнего: под индексом остаётся меньше
-        # строк, чем раньше. Значит пересоздание не может упереться в уже
-        # существующие дубли и не требует предварительной чистки.
-        self.conn.execute(
-            "CREATE UNIQUE INDEX idx_tasks_campaign_contact "
-            "  ON tasks(campaign_id, contact_id) "
-            f"  WHERE {_TASKS_UNIQUE_WHERE}"
-        )
+        if row is None:
+            return False
+        return (_normalized_index_sql(row["sql"])
+                == _normalized_index_sql(_TASKS_UNIQUE_INDEX_SQL))
 
     # -- базовые операции ---------------------------------------------------
 
