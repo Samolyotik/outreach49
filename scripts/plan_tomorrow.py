@@ -136,6 +136,51 @@ def debt(conn: sqlite3.Connection) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+#: Действия-ответы. Человек написал нам сам и ждёт: такой ответ не занимает
+#: место в дневной норме исходящих касаний и не считается нагрузкой аккаунта.
+REPLY_ACTIONS = ("reply_private_dm", "reply_channel_dm")
+
+#: Кампании, которые тоже отвечают, хотя действие у них обычное.
+#:
+#: `reply_private_dm` берёт адресата из входящего уведомления Radar, и когда
+#: уведомления уже нет — догон из старой очереди, ручной ответ, письмо со
+#: ссылкой — ответ уходит обычной отправкой. По действию его не отличить, по
+#: кампании отличить можно, и разница существенная: иначе один догон-ответ
+#: съедает у аккаунта место в дневной норме исходящих.
+REPLY_CAMPAIGNS = ("direct_invites", "manual_replies", "pending_replies")
+
+
+def outreach_load(conn: sqlite3.Connection, date: str) -> dict[int, int]:
+    """Сколько исходящих касаний у аккаунта на этот день — вместе с ушедшими.
+
+    Роли пересекаются: пять аккаунтов одновременно `chat_sender` и
+    `dm_sender`, и на 05.08 у них уже стояло по пять сообщений в чаты. Без
+    этого счёта личка добавилась бы сверху и вывела бы их на десять видимых
+    действий за день вместо пяти.
+
+    Считаются и запланированные, и уже отправленные. Иначе счёт работал бы
+    только до первой отправки: прогон в середине дня увидел бы вычерпанный
+    аккаунт пустым — задачи уже не `planned` — и выдал бы ему вторую норму.
+    Отметка берётся та же, что у диспетчера: `dispatched_at`, а при её
+    отсутствии `attempted_at`, потому что попытка расходует дневной бюджет
+    наравне с удачной отправкой.
+    """
+    actions = ",".join("?" * len(REPLY_ACTIONS))
+    campaigns = ",".join("?" * len(REPLY_CAMPAIGNS))
+    rows = conn.execute(
+        "SELECT account_id, count(*) AS n FROM tasks "
+        " WHERE state <> 'cancelled' "
+        "   AND ( (state = 'planned' AND date(scheduled_at) = date(?)) "
+        "      OR substr(COALESCE(dispatched_at, attempted_at), 1, 10) "
+        "         = substr(?, 1, 10) ) "
+        f"   AND action NOT IN ({actions}) "
+        f"   AND campaign_id NOT IN ({campaigns}) "
+        " GROUP BY account_id",
+        (date, date, *REPLY_ACTIONS, *REPLY_CAMPAIGNS),
+    ).fetchall()
+    return {int(r["account_id"]): int(r["n"]) for r in rows}
+
+
 def jitter_minutes(seed: str, step_min: float, *,
                    ratio: float = JITTER_RATIO) -> float:
     """Детерминированный сдвиг слота в пределах ±ratio доли."""
@@ -147,15 +192,20 @@ def jitter_minutes(seed: str, step_min: float, *,
 def build(db: Path, *, date: str, per_account: int,
           from_hour: int, to_hour: int,
           dm_pool: list[dict] | None = None,
-          jitter: float = JITTER_RATIO) -> dict:
+          jitter: float = JITTER_RATIO,
+          only_dm: bool = False) -> dict:
     conn = connect(db)
     try:
         accounts = ready_accounts(conn)
-        pools = {
+        # В режиме одной лички чужие пулы и долг не трогаем вовсе. Долг — это
+        # уже поставленные задачи, и пересчёт дал бы им новые слоты: план на
+        # день, который уже лежит в очереди, переехал бы целиком.
+        pools = {lane: [] for lane in LANES} if only_dm else {
             lane: verified_targets(conn, campaign)
             for lane, (_, campaign, _) in LANES.items()
         }
-        outstanding = debt(conn)
+        outstanding = [] if only_dm else debt(conn)
+        loaded = outreach_load(conn, date)
     finally:
         conn.close()
 
@@ -208,22 +258,44 @@ def build(db: Path, *, date: str, per_account: int,
     if dm_pool:
         lane, action, kind = DM_LANE
         eligible = [a for a in accounts if lane in a["roles"]]
+        # Пять аккаунтов совмещают чаты и личку. Если своих, ничем сегодня не
+        # занятых, хватает на весь пул — берём только их: у совмещённого
+        # аккаунта к чатам и ответам добавился бы третий вид активности за
+        # день, а выигрыша никакого. Не хватает — подключаем и остальных.
+        free = [a for a in eligible if not loaded.get(a["id"])]
+        if len(free) * per_account >= len(dm_pool):
+            eligible = free
         cursor = 0
+        skipped_without_text = 0
         for _ in range(per_account):
             for account in eligible:
                 slots = by_account.setdefault(account["id"], [])
-                if len(slots) >= per_account or cursor >= len(dm_pool):
+                # Потолок считается вместе с тем, что уже стоит на этот день:
+                # аккаунт с пятью сообщениями в чаты личку сегодня не берёт.
+                room = per_account - loaded.get(account["id"], 0)
+                if len(slots) >= room or cursor >= len(dm_pool):
                     continue
                 target = dm_pool[cursor]
                 cursor += 1
+                # Личное письмо пишется под конкретного человека, и подставить
+                # общий текст вместо своего нельзя. Кандидат без готового
+                # текста просто ждёт следующего прогона.
+                body = str(target.get("текст") or "").strip()
+                if not body:
+                    skipped_without_text += 1
+                    continue
                 slots.append({
                     "вид": kind,
                     "действие": action,
                     "кому": target["username"],
+                    "row_id": str(target.get("row_id") or target.get("btm_id") or ""),
                     "категория": target.get("категория"),
+                    "текст": body,
                     "повод": str(target.get("сообщение") or "")[:120],
                 })
         left_over[lane] = max(0, len(dm_pool) - cursor)
+        if skipped_without_text:
+            left_over["без текста"] = skipped_without_text
 
     plan = [(acc, item) for acc, items in by_account.items() for item in items]
     total = len(plan)
@@ -332,6 +404,8 @@ def main() -> int:
     parser.add_argument("--to-hour", type=int, default=21)
     parser.add_argument("--dm-candidates",
                         help="файл от export_b140_candidates.py")
+    parser.add_argument("--only-dm", action="store_true",
+                        help="планировать только личку, не трогая долг и разведку")
     parser.add_argument("--jitter", type=float, default=JITTER_RATIO,
                         help="доля части окна, 0.75 по умолчанию")
     parser.add_argument("--out")
@@ -345,7 +419,7 @@ def main() -> int:
 
     plan = build(Path(args.db), date=args.date, per_account=args.per_account,
                  from_hour=args.from_hour, to_hour=args.to_hour,
-                 dm_pool=dm_pool, jitter=args.jitter)
+                 dm_pool=dm_pool, jitter=args.jitter, only_dm=args.only_dm)
     summarize(plan)
     if args.out:
         Path(args.out).write_text(
