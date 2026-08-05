@@ -9,11 +9,26 @@ Radar показывает в бизнес-форуме только Channel DM:
 сами: bridge49 знает и что отправил, и что получил, а до Telegram дотягивается
 обычным ботом. Никакого Radar в этом пути нет — ни рестартов, ни hot-reload.
 
-Что уходит в группу:
+Что уходит в группы:
 
 * исходящие — в чаты, в личку и в личку каналов, с текстом и адресатом;
 * входящие — ответы людей;
 * карточки менеджеру, когда машина передаёт разговор человеку.
+
+## Две группы, а не одна
+
+Сначала всё шло в одну группу — и она перестала читаться. За двое суток туда
+уехало 229 сообщений, из них 153 переписки и 55 карточек: заявка, ради которой
+группа и заводилась, тонула среди зеркала разговоров. Поэтому потоки разведены:
+
+* `OUTREACH_MANAGER_TELEGRAM_CHAT_ID` — только карточки менеджеру. Всё, что
+  там появилось, требует действия человека;
+* `OUTREACH_DIALOG_TELEGRAM_CHAT_ID` — вся переписка. Читают, когда нужен
+  контекст, а не по каждому событию.
+
+Если вторая группа не задана, поведение прежнее: всё в одну. Ветки у групп
+свои — номер ветки одной группы в другой не значит ничего, поэтому у контакта
+две колонки.
 
 Курсор хранится у нас: каждое событие уезжает ровно один раз. Повторный проход
 после обрыва ничего не задваивает, потому что курсор двигается только после
@@ -26,15 +41,20 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .store import Store, now
 
 BOT_TOKEN_ENV = "OUTREACH_MANAGER_TELEGRAM_BOT_TOKEN"
 CHAT_ID_ENV = "OUTREACH_MANAGER_TELEGRAM_CHAT_ID"
+DIALOG_CHAT_ID_ENV = "OUTREACH_DIALOG_TELEGRAM_CHAT_ID"
 THREAD_ID_ENV = "OUTREACH_MANAGER_TELEGRAM_THREAD_ID"
 TOPIC_PREFIX_ENV = "OUTREACH_MANAGER_TELEGRAM_TOPIC_PREFIX"
 ENABLED_ENV = "OUTREACH_MANAGER_TELEGRAM_ENABLED"
+
+#: Где чей поток и в какой колонке лежит ветка собеседника.
+MANAGER = ("manager", CHAT_ID_ENV, "forum_thread_id")
+DIALOG = ("dialog", DIALOG_CHAT_ID_ENV, "dialog_thread_id")
 
 #: Докуда уже отзеркалили. Раздельно по видам: отправки и входящие живут в
 #: разных таблицах с разными ключами, и общий курсор их бы перепутал.
@@ -92,7 +112,26 @@ class ForumError(RuntimeError):
 
 
 class NoTopic(ForumError):
-    """У собеседника ещё нет ветки — событие пропускаем, а не теряем связь."""
+    """У собеседника ещё нет ветки — событие пропускаем, а не теряем связь.
+
+    Только про «человек пока не отвечал». Отказ Telegram завести ветку — это
+    не то же самое: там событие ещё можно доставить позже, и подменять одно
+    другим значит терять переписку молча (см. `ensure_topic`).
+    """
+
+
+def destination(kind: tuple[str, str, str]) -> tuple[str, str]:
+    """Куда писать поток и в какой колонке искать его ветку.
+
+    Группа диалогов необязательна: пока её нет, всё идёт по-старому в группу
+    менеджера и в её же ветки. Так включение сводится к одной переменной, а
+    выключение — к её удалению.
+    """
+    _, chat_env, column = kind
+    chat = os.environ.get(chat_env, "").strip()
+    if chat:
+        return chat, column
+    return os.environ.get(CHAT_ID_ENV, "").strip(), MANAGER[2]
 
 
 def enabled() -> bool:
@@ -123,7 +162,8 @@ def _call(method: str, payload: Mapping[str, Any], *, timeout: int = 20) -> dict
     return parsed.get("result") or {}
 
 
-def send(text: str, *, thread_id: int | None = None) -> dict:
+def send(text: str, *, thread_id: int | None = None,
+         chat_id: str | None = None) -> dict:
     """Одно сообщение в ветку собеседника.
 
     Без ветки не отправляем ничего. General — это лента, в которой переписка
@@ -137,11 +177,29 @@ def send(text: str, *, thread_id: int | None = None) -> dict:
     if not thread or int(thread) == GENERAL_THREAD_ID:
         raise NoTopic("нет ветки собеседника")
     return _call("sendMessage", {
-        "chat_id": os.environ.get(CHAT_ID_ENV, "").strip(),
+        "chat_id": chat_id or os.environ.get(CHAT_ID_ENV, "").strip(),
         "text": text[:4000],
         "disable_web_page_preview": True,
         "message_thread_id": int(thread),
     })
+
+
+def remember(store: Store, result: Mapping[str, Any], *, chat_id: str,
+             thread_id: int | None, kind: str, ref: str,
+             contact_id: str | None) -> None:
+    """Запомнить, что и куда мы отправили.
+
+    Без этого убрать из группы лишнее нечем: Telegram не даёт боту читать
+    историю, и своё сообщение приходится опознавать пересылкой.
+    """
+    message_id = int((result or {}).get("message_id") or 0)
+    if not message_id:
+        return
+    store.execute(
+        "INSERT OR IGNORE INTO forum_posts(chat_id, message_id, thread_id, "
+        "  kind, ref, contact_id, created_at) VALUES(?,?,?,?,?,?,?)",
+        (str(chat_id), message_id, thread_id, kind, str(ref),
+         contact_id, now()))
 
 
 def topic_name(row: Mapping[str, Any]) -> str:
@@ -160,54 +218,115 @@ def topic_name(row: Mapping[str, Any]) -> str:
     return name[:128]
 
 
-def ensure_topic(store: Store, contact_id: str | None) -> int | None:
-    """Ветка собеседника. Заводится один раз и запоминается.
+def ensure_topic(store: Store, contact_id: str | None, *,
+                 chat_id: str, column: str = "forum_thread_id") -> int | None:
+    """Ветка собеседника в этой группе. Заводится один раз и запоминается.
 
     Ветка появляется только после того, как человек ответил. Заводить её на
     каждое исходящее значит превращать группу в список рассылки: за сутки мы
     пишем десяткам, отвечают единицы, и настоящие разговоры утонули бы среди
     пустых веток.
 
-    Пока ответа нет, исходящие уходят в общую ленту. Как только человек
-    ответил, у него появляется своя ветка, и дальше переписка идёт там.
+    Пока ответа нет, возвращаем None: событие пропускается как `NoTopic`, и
+    курсор идёт дальше — ждать ответа, который может не прийти никогда, эта
+    очередь не должна.
 
-    Без собеседника (или если группа не форум) возвращаем None — сообщение
-    уедет в общую ленту, что лучше, чем не уехать вовсе.
+    А вот отказ Telegram завести ветку — совсем другое дело, и молча его
+    глотать нельзя. Раньше здесь возвращался None, `send` поднимал `NoTopic`,
+    курсор двигался — и переписка исчезала. Именно так она и исчезла бы при
+    переезде в группу диалогов, где боту ещё не выдали право на темы.
+    Поэтому теперь наверх уходит `ForumError`: поток встаёт, курсор держится,
+    следующий проход повторит.
     """
     if not contact_id:
         return None
     row = store.one(
-        "SELECT id, username, display_name, tg_id, forum_thread_id "
+        f"SELECT id, username, display_name, tg_id, {column} AS thread "
         "FROM contacts WHERE id = ?", (contact_id,))
     if row is None:
         return None
-    if row["forum_thread_id"]:
-        return int(row["forum_thread_id"])
+    if row["thread"]:
+        return int(row["thread"])
     if store.one("SELECT 1 FROM inbound WHERE contact_id = ? LIMIT 1",
                  (contact_id,)) is None:
         return None
     try:
         created = _call("createForumTopic", {
-            "chat_id": os.environ.get(CHAT_ID_ENV, "").strip(),
+            "chat_id": chat_id,
             "name": topic_name(dict(row)),
         })
     except ForumError as exc:
-        # Группа может быть не форумом или у бота нет права на темы. Это не
-        # повод терять сообщение: оно уйдёт в общую ленту.
         store.log("forum", "forum.topic_failed", str(contact_id), str(exc)[:200])
         store.commit()
-        return None
+        raise
     thread_id = int(created.get("message_thread_id") or 0) or None
     if thread_id:
-        store.execute("UPDATE contacts SET forum_thread_id = ? WHERE id = ?",
+        store.execute(f"UPDATE contacts SET {column} = ? WHERE id = ?",
                       (thread_id, contact_id))
         store.commit()
     return thread_id
 
 
-def handoff_card(row: Mapping[str, Any]) -> str:
-    """Карточка менеджеру: машина передаёт разговор человеку."""
-    return "\n".join(filter(None, [
+#: Сколько последних реплик показывать в карточке и сколько знаков на реплику.
+#:
+#: Десять — граница, за которой карточка перестаёт читаться с одного экрана, а
+#: пользы не прибавляет: решение менеджер принимает по концу разговора, а не по
+#: его началу. Длинные реплики режутся, потому что в переписке встречаются
+#: простыни на тысячу знаков, и одна такая вытеснила бы весь остальной обмен.
+HISTORY_LINES = 10
+HISTORY_CHARS = 220
+
+
+def conversation(store: Store, contact_id: str | None, *,
+                 limit: int = HISTORY_LINES) -> list[dict]:
+    """Последние реплики разговора: что мы написали и что ответили.
+
+    Собирается из двух мест, потому что живёт в двух: наши отправки — в
+    `tasks`, чужие ответы — в `inbound`. Общего журнала переписки у нас нет,
+    и заводить его ради показа не стоит.
+    """
+    if not contact_id:
+        return []
+    rows = list(store.query(
+        "SELECT COALESCE(t.finished_at, t.dispatched_at) AS at, 'мы' AS side, "
+        "       t.params AS body FROM tasks t "
+        " WHERE t.contact_id = ? AND t.state = 'done' "
+        "   AND t.action IN ('send_private_dm', 'send_channel_dm', "
+        "                    'send_public_chat_message', 'reply_private_dm', "
+        "                    'reply_channel_dm') "
+        " UNION ALL "
+        "SELECT i.created_at AS at, 'он' AS side, i.text AS body FROM inbound i "
+        " WHERE i.contact_id = ? "
+        " ORDER BY at DESC LIMIT ?",
+        (contact_id, contact_id, int(limit))))
+    out = []
+    for row in reversed(rows):
+        text = str(row["body"] or "")
+        if row["side"] == "мы":
+            try:
+                text = str(json.loads(text or "{}").get("text") or "")
+            except (TypeError, ValueError):
+                text = ""
+        text = " ".join(text.split())
+        if not text:
+            continue
+        out.append({"когда": str(row["at"] or "")[:16].replace("T", " "),
+                    "кто": row["side"], "текст": text[:HISTORY_CHARS]})
+    return out
+
+
+def handoff_card(row: Mapping[str, Any],
+                 history: Sequence[Mapping[str, Any]] | None = None) -> str:
+    """Карточка менеджеру: машина передаёт разговор человеку.
+
+    Разговор идёт прямо в карточку, а не отдельными сообщениями рядом. Причина
+    простая: 05.08 переписку из группы заявок убрали, чтобы та читалась, и
+    карточки остались висеть без всякого контекста — «назвал сферу», а какую и
+    в ответ на что, поди угадай. Мирить это разнесением по двум группам
+    бессмысленно: человеку, который берёт заявку в работу, нужен разговор
+    здесь и сейчас, а не в соседней группе.
+    """
+    lines = [
         "НУЖЕН ЧЕЛОВЕК",
         "причина: %s" % (row["reason"] or "не указана"),
         "кому: %s" % (("@" + str(row["username"])) if row["username"]
@@ -215,7 +334,12 @@ def handoff_card(row: Mapping[str, Any]) -> str:
         "аккаунт: %s" % row["account_id"],
         "",
         str(row["note"] or "")[:2000],
-    ]))
+    ]
+    if history:
+        lines += ["", "── о чём говорили ──"]
+        lines += ["%s %s: %s" % (item["когда"], item["кто"], item["текст"])
+                  for item in history]
+    return "\n".join(filter(None, lines))
 
 
 def _peer(row: Mapping[str, Any]) -> str:
@@ -298,14 +422,24 @@ def run(store: Store, *, limit: int = 30, actor: str = "forum") -> dict:
         return {"состояние": "выключено", "отправлено": 0}
 
     posted = failed = skipped = 0
+    dialog_chat, dialog_column = destination(DIALOG)
+    manager_chat, manager_column = destination(MANAGER)
+
+    def deliver(card: str, *, chat: str, column: str, kind: str, ref: str,
+                contact_id: str | None) -> None:
+        thread = ensure_topic(store, contact_id, chat_id=chat, column=column)
+        result = send(card, thread_id=thread, chat_id=chat)
+        remember(store, result, chat_id=chat, thread_id=thread, kind=kind,
+                 ref=ref, contact_id=contact_id)
 
     # -- исходящие -----------------------------------------------------------
     cursor = adopt_sent_cursor(store)
     rows = store.query(SENT_SQL, (cursor, int(limit)))
     for row in rows:
         try:
-            send(outgoing_card(dict(row)),
-                 thread_id=ensure_topic(store, row["contact_id"]))
+            deliver(outgoing_card(dict(row)), chat=dialog_chat,
+                    column=dialog_column, kind="outgoing",
+                    ref=str(row["id"]), contact_id=row["contact_id"])
             posted += 1
         except NoTopic:
             # Человек ещё не отвечал. Курсор всё равно двигаем: иначе одно
@@ -314,6 +448,7 @@ def run(store: Store, *, limit: int = 30, actor: str = "forum") -> dict:
         except ForumError as exc:
             failed += 1
             store.log(actor, "forum.failed", str(row["id"]), str(exc)[:200])
+            store.commit()
             break
         store.set_state(CURSOR_SENT, str(row["finished_at"]))
         store.commit()
@@ -327,22 +462,24 @@ def run(store: Store, *, limit: int = 30, actor: str = "forum") -> dict:
     )
     for row in rows:
         try:
-            send(inbound_card(dict(row)),
-                 thread_id=ensure_topic(store, row["contact_id"]))
+            deliver(inbound_card(dict(row)), chat=dialog_chat,
+                    column=dialog_column, kind="inbound",
+                    ref=str(row["id"]), contact_id=row["contact_id"])
             posted += 1
         except NoTopic:
             skipped += 1
         except ForumError as exc:
             failed += 1
             store.log(actor, "forum.failed", str(row["id"]), str(exc)[:200])
+            store.commit()
             break
         store.set_state(CURSOR_INBOUND, str(row["id"]))
         store.commit()
 
     # -- карточки менеджеру ---------------------------------------------------
     #
-    # Отдельным типом, а не в общем потоке: это единственные события, где от
-    # человека ждут действия. В ленте вперемешку с перепиской они теряются.
+    # Единственный поток группы заявок: это события, где от человека ждут
+    # действия. Пока рядом ехало зеркало переписки, они в нём терялись.
     handoff_cursor = str(store.get_state(CURSOR_HANDOFF, "") or "")
     rows = store.query(
         "SELECT h.id, h.reason, h.note, h.created_at, t.account_id, "
@@ -355,14 +492,18 @@ def run(store: Store, *, limit: int = 30, actor: str = "forum") -> dict:
     )
     for row in rows:
         try:
-            send(handoff_card(dict(row)),
-                 thread_id=ensure_topic(store, row["contact_id"]))
+            deliver(handoff_card(dict(row),
+                                 conversation(store, row["contact_id"])),
+                    chat=manager_chat,
+                    column=manager_column, kind="handoff",
+                    ref=str(row["id"]), contact_id=row["contact_id"])
             posted += 1
         except NoTopic:
             skipped += 1
         except ForumError as exc:
             failed += 1
             store.log(actor, "forum.failed", str(row["id"]), str(exc)[:200])
+            store.commit()
             break
         store.set_state(CURSOR_HANDOFF, str(row["created_at"]))
         store.commit()

@@ -179,6 +179,23 @@ CREATE TABLE IF NOT EXISTS inbound (
 CREATE INDEX IF NOT EXISTS idx_inbound_peer ON inbound(account_id, peer_key, id);
 CREATE INDEX IF NOT EXISTS idx_inbound_unhandled ON inbound(handled, id);
 
+-- Что мы уже отправили в рабочие группы. Нужно не для показа, а для уборки:
+-- 05.08 выяснилось, что вычистить из группы лишнее нечем — номеров сообщений
+-- мы не сохраняли, и единственным способом узнать своё сообщение оставалось
+-- переслать его и прочитать. Теперь номер известен сразу.
+CREATE TABLE IF NOT EXISTS forum_posts (
+  chat_id     TEXT    NOT NULL,
+  message_id  INTEGER NOT NULL,
+  thread_id   INTEGER,
+  kind        TEXT    NOT NULL,   -- outgoing | inbound | handoff
+  ref         TEXT,               -- id задачи, входящего или карточки
+  contact_id  TEXT REFERENCES contacts(id),
+  created_at  TEXT    NOT NULL,
+  PRIMARY KEY (chat_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_forum_posts_kind
+  ON forum_posts(chat_id, kind, created_at);
+
 -- Диалог = связка аккаунт ↔ собеседник. Растёт из tasks и inbound.
 CREATE TABLE IF NOT EXISTS threads (
   id              TEXT PRIMARY KEY,
@@ -334,6 +351,11 @@ class Store:
         # ответил конкретный человек, приходится вылавливать его сообщения
         # среди чужих.
         ("contacts", "forum_thread_id", "INTEGER"),
+        # Ветка в группе диалогов. Отдельной колонкой от `forum_thread_id`:
+        # групп теперь две, и номера веток в них независимы — подставить
+        # ветку одной группы в другую значит писать в чужой разговор или
+        # в никуда.
+        ("contacts", "dialog_thread_id", "INTEGER"),
         # Кому поручать эту кампанию, если роль решает не только допуск.
         # Пусто — любой, кому действие разрешено. Отдельной колонкой, а не
         # ключом в params: params уезжают в Radar как параметры действия и
