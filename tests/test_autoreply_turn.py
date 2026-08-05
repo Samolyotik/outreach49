@@ -1,4 +1,4 @@
-"""Молчаливые решения и карточка менеджеру при повторе.
+"""Ход собеседника, молчаливые решения и карточка при повторе.
 
 Каждый тест здесь стоит за конкретным разговором 05.08, где машина повела себя
 плохо на живом человеке. Поэтому проверяется не форма, а именно то поведение,
@@ -22,6 +22,93 @@ from bridge49.store import Store, now  # noqa: E402
 def stamp(shift_seconds: float) -> str:
     return (datetime.now(timezone.utc)
             + timedelta(seconds=shift_seconds)).isoformat()
+
+
+class TurnWindowTests(unittest.TestCase):
+    """«Он дописал мысль» — это один ход, а не два."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "b.sqlite")
+        self.store.execute(
+            "INSERT INTO accounts(id, label, role, enabled, synced_at) "
+            "VALUES(821,'a','dm_sender',1,?)", (now(),))
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, created_at, updated_at) "
+            "VALUES('autoreplies','а','reply_private_dm',?,?)", (now(), now()))
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def add(self, inbound_id: int, text: str, *, age: float,
+            peer: str = "@somebody", mid_conversation: bool = True) -> None:
+        """Сообщение собеседника.
+
+        По умолчанию — середина разговора: мы ему уже отвечали. Окно тишины
+        действует только там, поэтому эту предысторию тест и заводит.
+        """
+        contact = f"c{peer.strip('@')}"
+        if mid_conversation and not self.store.one(
+                "SELECT 1 FROM contacts WHERE id=?", (contact,)):
+            self.store.execute(
+                "INSERT INTO contacts(id, kind, username, created_at, "
+                "updated_at) VALUES(?,'user',?,?,?)",
+                (contact, peer.strip("@"), now(), now()))
+            self.store.execute(
+                "INSERT INTO tasks(id, campaign_id, contact_id, account_id, "
+                "action, params, mode, scheduled_at, state, created_at, "
+                "updated_at) VALUES(?,'autoreplies',?,821,'reply_private_dm',"
+                "'{}','immediate',?,'done',?,?)",
+                (f"t_{contact}", contact, now(), now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, text, "
+            "raw, contact_id, sent_at, handled, created_at) "
+            "VALUES(?,821,'private_dm',?,?,'{}',?,?,0,?)",
+            (inbound_id, peer, text, contact if mid_conversation else None,
+             stamp(-age), stamp(-age)))
+        self.store.commit()
+
+    def test_fresh_message_waits_for_the_person_to_finish(self):
+        """Ровно случай 11:54:21 → 11:54:32: на первое отвечать рано."""
+        self.add(1, "И как это работает?", age=5)
+        self.assertEqual(autoreply.pending(self.store), [])
+
+    def test_first_message_from_a_new_person_is_not_delayed(self):
+        """Окно — про середину разговора, а не про первое обращение."""
+        self.add(1, "Здравствуйте", age=2, mid_conversation=False)
+        self.assertEqual(len(autoreply.pending(self.store)), 1)
+
+    def test_quiet_turn_is_answered(self):
+        self.add(1, "И как это работает?", age=autoreply.TURN_QUIET + 5)
+        self.assertEqual(len(autoreply.pending(self.store)), 1)
+
+    def test_series_collapses_into_the_last_message(self):
+        self.add(1, "И как это работает?", age=autoreply.TURN_QUIET + 20)
+        self.add(2, "Мне писать люди будут?", age=autoreply.TURN_QUIET + 5)
+        self.assertEqual([r["id"] for r in autoreply.pending(self.store)], [2])
+        older = self.store.one("SELECT handled FROM inbound WHERE id=1")
+        self.assertEqual(older["handled"], 1, "обогнанное помечено разобранным")
+
+    def test_a_person_who_never_pauses_still_gets_an_answer(self):
+        """Иначе пишущий без пауз не дождался бы ответа никогда."""
+        self.add(1, "первое", age=autoreply.TURN_MAX_WAIT + 60)
+        self.add(2, "второе", age=1)
+        self.assertEqual([r["id"] for r in autoreply.pending(self.store)], [2])
+
+    def test_different_people_do_not_delay_each_other(self):
+        self.add(1, "старое", age=autoreply.TURN_QUIET + 10, peer="@first")
+        self.add(2, "свежее", age=2, peer="@second")
+        self.assertEqual([r["id"] for r in autoreply.pending(self.store)], [1])
+
+    def test_unreadable_timestamp_does_not_stall_the_answer(self):
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, text, "
+            "raw, sent_at, handled, created_at) "
+            "VALUES(9,821,'private_dm','@x','привет','{}','не дата',0,'не дата')")
+        self.store.commit()
+        self.assertEqual(len(autoreply.pending(self.store)), 1)
 
 
 class SilentDecisionTests(unittest.TestCase):

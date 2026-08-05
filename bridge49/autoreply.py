@@ -54,6 +54,12 @@ REPLY_ROLES = frozenset({"channel_sender", "chat_sender", "dm_sender"})
 #: даёт движку понять, что сообщение было, и не выдумывает его содержания.
 ATTACHMENT_PLACEHOLDER = "[Вложение без текста]"
 
+#: Сколько собеседник должен помолчать, чтобы ход считался законченным.
+TURN_QUIET = 45.0
+
+#: Предел ожидания. Пишущий без пауз обязан получить ответ.
+TURN_MAX_WAIT = 300.0
+
 #: Решения, после которых человеку ничего не отправляется.
 #:
 #: `pause_conversation` отсюда убран, и это не послабление. Нормализатор
@@ -707,23 +713,47 @@ def reply_moment(inbound: dict, settings) -> str:
     return max(moment, datetime.now(timezone.utc)).isoformat()
 
 
-def pending(store: Store, limit: int = 20) -> list[dict]:
-    """Входящие, которые ещё не разобраны.
+def pending(store: Store, limit: int = 20, *, at: str | None = None) -> list[dict]:
+    """Входящие, которые ещё не разобраны, по одному ходу на собеседника.
 
-    Если от одного человека пришло несколько сообщений подряд, отвечаем только
-    на последнее: предыдущие — часть того же хода, и три ответа подряд на них
-    выглядели бы хуже, чем один на всё сразу. Обогнанные помечаем разобранными,
-    их текст всё равно уедет в модель как история.
+    Схлопывание внутри прогона было всегда: несколько сообщений подряд — это
+    один ход, и три ответа на него выглядели бы хуже, чем один на всё сразу.
+    Обогнанные помечаем разобранными, их текст всё равно уедет в модель как
+    история.
+
+    Но работало это только внутри тика. Человек, дописавший мысль через десять
+    секунд, попадал уже в следующий прогон — и получал второе сообщение:
+
+        11:54:21  он  И как это работает?
+        11:54:32  он  Мне писать люди будут по поводу таро?
+        11:55:38  мы  ТГ РАДАР — ИИ-сервис…
+        11:56:54  мы  Не совсем: ТГ РАДАР сначала находит…
+
+    Заменить ждущий ответ на пересобранный (`supersede`) нельзя: к следующему
+    тику диспетчер уже закрепил за ним запрос. За всю историю базы замена не
+    сработала ни разу — то есть чинить надо не её.
+
+    Поэтому ход считается законченным, когда собеседник помолчал ``TURN_QUIET``.
+    Цена — эти секунды, и она мала: медиана ответа сейчас 5–7 минут.
+
+    Окно действует только в середине разговора, где мы этому человеку уже
+    отвечали: дубли рождаются там, а ждать пришлось бы каждого нового
+    собеседника. И оно не вечно — через ``TURN_MAX_WAIT`` ход закрывается
+    принудительно, иначе пишущий без пауз не дождался бы ответа никогда.
     """
+    stamp = at or now()
     rows = [dict(r) for r in store.query(
         "SELECT * FROM inbound WHERE handled = 0 ORDER BY id", ()
     )]
     newest: dict[tuple[int, str], dict] = {}
+    oldest: dict[tuple[int, str], dict] = {}
     superseded: list[int] = []
     for row in rows:
         key = (int(row["account_id"]), str(row["peer_key"]))
         if key in newest:
             superseded.append(int(newest[key]["id"]))
+        else:
+            oldest[key] = row
         newest[key] = row
     if superseded:
         marks = ",".join("?" * len(superseded))
@@ -731,7 +761,52 @@ def pending(store: Store, limit: int = 20) -> list[dict]:
             f"UPDATE inbound SET handled = 1 WHERE id IN ({marks})", superseded
         )
         store.commit()
-    return list(newest.values())[:limit]
+
+    return [row for key, row in newest.items()
+            if _turn_is_closed(store, row, oldest[key], stamp)][:limit]
+
+
+def _turn_is_closed(store: Store, newest: dict, oldest: dict, stamp: str) -> bool:
+    """Закончил ли собеседник мысль."""
+    quiet = _age_seconds(newest.get("sent_at") or newest.get("created_at"), stamp)
+    if quiet is None or quiet >= TURN_QUIET:
+        # Неразобранная отметка не должна задерживать ответ.
+        return True
+    waited = _age_seconds(oldest.get("sent_at") or oldest.get("created_at"), stamp)
+    if waited is not None and waited >= TURN_MAX_WAIT:
+        return True
+    return not _conversation_started(store, newest)
+
+
+def _age_seconds(stamp: str | None, at: str) -> float | None:
+    try:
+        then = datetime.fromisoformat(str(stamp))
+        moment = datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (moment - then).total_seconds()
+
+
+def _conversation_started(store: Store, row: dict) -> bool:
+    """Писали ли мы этому человеку — то есть идёт ли уже разговор.
+
+    Считается любое наше отправленное сообщение, а не только ответ. Сначала
+    здесь стояли одни ответы, и проверка на боевых данных показала, чего это
+    стоит: `@deliverymag`, один из трёх подтверждённых дублей 05.08, окном не
+    закрывался. Ему уходило холодное письмо, а не ответ, — разговор с нашей
+    стороны начался, серия сообщений пришла на него же.
+    """
+    contact_id = row.get("contact_id")
+    if not contact_id:
+        return False
+    return store.one(
+        "SELECT 1 FROM tasks WHERE contact_id = ? AND state = 'done' LIMIT 1",
+        (contact_id,),
+    ) is not None
 
 
 def run(
