@@ -162,6 +162,20 @@ def is_bot(row: dict) -> bool:
     return str(row.get("author_username") or "").lower().endswith("bot")
 
 
+def is_channel(row: dict) -> bool:
+    """Автор — канал или группа, а не человек.
+
+    В Telegram у пользователей идентификатор положительный, у каналов и
+    супергрупп — отрицательный. Сообщение от имени канала выглядит в выборке
+    как обычный лид с юзернеймом, но написать такому «адресату» в личку нельзя:
+    05.08 два письма из семидесяти ушли на `@jobfortarget` и
+    `@vakansii_targetologi` и вернулись с `not_sent` без всякого пояснения —
+    Radar просто не смог разрешить юзернейм в пользователя. В пуле таких
+    оказалось девять из четырёхсот.
+    """
+    return str(row.get("author_native_id") or "").strip().startswith("-")
+
+
 def select(rows: list[dict], *, contacted: set[str], limit: int) -> dict:
     """Отсеять по правилам и оставить по одному лучшему сообщению на человека."""
     rejected: dict[str, int] = {}
@@ -180,6 +194,9 @@ def select(rows: list[dict], *, contacted: set[str], limit: int) -> dict:
             continue
         if is_bot(row):
             reject("bot_author")
+            continue
+        if is_channel(row):
+            reject("channel_author")
             continue
         if bool(row.get("author_banned")):
             reject("business_author_banned")
