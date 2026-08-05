@@ -174,6 +174,41 @@ def _upsert_thread(
     return thread_id
 
 
+def adopt_stranger(store: Store, peer: dict, peer_key: str) -> str | None:
+    """Завести контакт человеку, который написал нам первым.
+
+    До этого такие оставались без `contact_id`: в рассылку мы им не писали,
+    значит и в `contacts` их не было. Последствие вылезло не там, где
+    ожидалось — карточка менеджеру собирается по контакту, и у написавшего
+    первым не оказывалось ни своей ветки в группе, ни истории разговора.
+    Менеджер видел «нужен человек» и ни строчки о том, что человек сказал.
+
+    Заводить контакт безопасно: кампании набирают адресатов поимённо, и сам
+    факт строки в `contacts` никому письма не приносит. Зато диалог с этого
+    момента собирается как любой другой.
+    """
+    username = str(peer.get("username") or "").strip().lstrip("@")
+    try:
+        tg_id = int(peer.get("tg_id") or 0) or None
+    except (TypeError, ValueError):
+        tg_id = None
+    if not username and not tg_id:
+        return None
+    if tg_id:
+        found = store.one("SELECT id FROM contacts WHERE tg_id = ?", (tg_id,))
+        if found:
+            return str(found["id"])
+    contact_id = new_id("contact")
+    store.execute(
+        "INSERT INTO contacts(id, kind, username, tg_id, display_name, segment, "
+        "tags, status, vars, note, created_at, updated_at) "
+        "VALUES(?,'user',?,?,?,'inbound','[]','replied','{}',?,?,?)",
+        (contact_id, username or None, tg_id,
+         str(peer.get("display_name") or peer.get("name") or "")[:256] or None,
+         "написал первым: %s" % peer_key, now(), now()))
+    return contact_id
+
+
 async def poll_inbound(
     store: Store, settings: Settings, *, limit: int = 500, actor: str = "cli"
 ) -> dict:
@@ -218,6 +253,8 @@ async def poll_inbound(
                 (str(peer_username),),
             )
             contact_id = match["id"] if match else None
+        if contact_id is None:
+            contact_id = adopt_stranger(store, peer, peer_key)
 
         store.execute(
             "INSERT OR IGNORE INTO inbound(id, account_id, surface, peer_key, "

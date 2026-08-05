@@ -524,6 +524,13 @@ class InboundPollTests(unittest.TestCase):
             pollers.RadarBridge = original
 
     def test_foreign_correlation_ids_do_not_break_the_feed(self):
+        """Чужой идентификатор не принимаем, но человека всё равно заводим.
+
+        Разные вещи: доверять чужому `external_conversation_id` нельзя — в
+        фиде видны команды всего бизнеса. А вот собеседник настоящий, и без
+        своей строки в `contacts` у него не будет ни ветки в группе, ни
+        истории разговора в карточке менеджеру.
+        """
         result = self._poll([
             inbound_record(1001, job="их-кампания", conversation="их-лид")
         ])
@@ -532,7 +539,11 @@ class InboundPollTests(unittest.TestCase):
         self.assertEqual(result["cursor"], 1001)
         thread = self.store.one("SELECT * FROM threads")
         self.assertIsNone(thread["campaign_id"])
-        self.assertIsNone(thread["contact_id"])
+        self.assertNotEqual(thread["contact_id"], "их-лид")
+        contact = self.store.one("SELECT segment, note FROM contacts WHERE id = ?",
+                                 (thread["contact_id"],))
+        self.assertEqual(contact["segment"], "inbound")
+        self.assertIn("написал первым", contact["note"])
 
     def test_our_own_correlation_ids_are_linked(self):
         contact = entities.add_contact(self.store, username="someone",
@@ -2106,6 +2117,54 @@ class ReplyTests(unittest.TestCase):
         result = run_dispatch(self.store, self.settings, bridge, confirm=True)
         self.assertEqual(result["dispatched"], 1, result)
 
+class AdoptStrangerTests(unittest.TestCase):
+    """Человеку, написавшему первым, тоже нужен контакт.
+
+    Без него карточка менеджеру собирается пустой: и ветка в группе, и
+    история разговора ищутся по контакту, а его нет — писем-то мы этому
+    человеку не слали. Менеджер видит «нужен человек» и ни строчки о том,
+    что человек сказал.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "b.sqlite")
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def test_contact_is_created_from_username(self):
+        cid = pollers.adopt_stranger(
+            self.store, {"username": "someone", "tg_id": 12345}, "@someone")
+        row = self.store.one("SELECT * FROM contacts WHERE id = ?", (cid,))
+        self.assertEqual(row["username"], "someone")
+        self.assertEqual(row["tg_id"], 12345)
+        self.assertEqual(row["segment"], "inbound")
+        self.assertEqual(row["status"], "replied")
+
+    def test_existing_contact_is_reused_by_tg_id(self):
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, tg_id, created_at, "
+            "updated_at) VALUES('c_known','user','known',777,?,?)",
+            (now(), now()))
+        self.store.commit()
+        cid = pollers.adopt_stranger(self.store, {"tg_id": 777}, "id:777")
+        self.assertEqual(cid, "c_known")
+        self.assertEqual(
+            self.store.one("SELECT count(*) AS n FROM contacts")["n"], 1)
+
+    def test_nameless_peer_is_not_adopted(self):
+        """Ни имени, ни идентификатора — заводить нечего и незачем."""
+        self.assertIsNone(pollers.adopt_stranger(self.store, {}, "id:0"))
+        self.assertEqual(
+            self.store.one("SELECT count(*) AS n FROM contacts")["n"], 0)
+
+    def test_adopted_contact_carries_a_readable_note(self):
+        cid = pollers.adopt_stranger(
+            self.store, {"username": "vadim"}, "@vadim")
+        row = self.store.one("SELECT note FROM contacts WHERE id = ?", (cid,))
+        self.assertIn("написал первым", row["note"])
 
 if __name__ == "__main__":
     unittest.main()
