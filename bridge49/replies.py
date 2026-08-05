@@ -447,6 +447,20 @@ def supersede_pending_reply(store: Store, pending: Any, *,
     return True
 
 
+def _inbound_by_id(store: Store, thread: Any, inbound_id: int) -> dict:
+    """То самое входящее, по которому собран ответ.
+
+    Если его вдруг нет в этом треде — это не повод молча ответить на чужое:
+    возвращаемся к последнему, как раньше, но такой ответ хотя бы не уедет
+    реплаем в другой разговор.
+    """
+    row = store.one(
+        "SELECT * FROM inbound WHERE id = ? AND account_id = ? AND peer_key = ?",
+        (int(inbound_id), int(thread["account_id"]), thread["peer_key"]),
+    )
+    return dict(row) if row is not None else last_inbound(store, thread)
+
+
 def queue_reply(
     store: Store,
     *,
@@ -460,6 +474,7 @@ def queue_reply(
     review_reason: str | None = None,
     scheduled_at: str | None = None,
     supersede: bool = False,
+    inbound_id: int | None = None,
 ) -> dict[str, Any]:
     """Поставить ответ в очередь. Ничего никуда не отправляет.
 
@@ -488,7 +503,13 @@ def queue_reply(
     thread = find_thread(
         store, thread_id=thread_id, account_id=account_id, peer=peer
     )
-    inbound = last_inbound(store, thread)
+    # По умолчанию отвечаем на последнее входящее треда — так работает ручной
+    # ответ, где собеседник и есть «последний написавший». Но автоответ строит
+    # текст по конкретному сообщению, и пока он думал, могло прийти следующее:
+    # тогда Radar доставлял реплай не на то, на что мы отвечали. Живой случай
+    # 05.08 — ответ на 76797 уехал реплаем на 76799.
+    inbound = (_inbound_by_id(store, thread, inbound_id)
+               if inbound_id is not None else last_inbound(store, thread))
     contact_id = ensure_contact(store, thread, inbound)
     campaign_id = ensure_reply_campaign(store) if campaign_id is None else campaign_id
 

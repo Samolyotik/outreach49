@@ -180,8 +180,24 @@ def conversation_history(store: Store, thread: dict) -> list[dict[str, str]]:
             "created_at": stamp,
         }))
 
-    rows.sort(key=lambda item: item[0])
+    # Сортировать ISO-строки как строки нельзя: исходящие приезжают со
+    # смещением +03:00, входящие с +00:00, и «14:00+03» оказывается позже
+    # «12:00+00», хотя это один и тот же момент. Переписка выстраивалась не в
+    # том порядке — пока только в перенесённых тредах, но модель читает её как
+    # ход разговора.
+    rows.sort(key=lambda item: _sort_key(item[0]))
     return [item for _stamp, item in rows if item["text"].strip()]
+
+
+def _sort_key(stamp: str):
+    """Момент времени. Неразобранное уходит в конец, а не в случайное место."""
+    try:
+        moment = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return (1, datetime.max.replace(tzinfo=timezone.utc))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return (0, moment)
 
 
 def we_started_it(store: Store, thread: dict) -> bool:
@@ -208,8 +224,14 @@ def we_started_it(store: Store, thread: dict) -> bool:
         (thread["id"],),
     ):
         return True
+    # Разведывательные чтения (метаданные канала, проверка личек) сюда не
+    # годятся: они ничего человеку не отправляли, а гейт «мы начали разговор»
+    # именно про отправленное. Иначе разведка молча открывает ворота.
     return store.one(
-        "SELECT 1 FROM tasks WHERE contact_id = ? AND state = 'done' LIMIT 1",
+        "SELECT 1 FROM tasks WHERE contact_id = ? AND state = 'done' "
+        "  AND action IN ('send_private_dm', 'send_channel_dm', "
+        "                 'send_public_chat_message', 'reply_private_dm', "
+        "                 'reply_channel_dm') LIMIT 1",
         (thread["contact_id"],),
     ) is not None
 
@@ -545,6 +567,9 @@ def apply(
                 # Человек мог дописать, пока наш ответ ждёт паузы на чтение.
                 # Тогда его надо пересобрать, а не звать менеджера.
                 supersede=True,
+                # Отвечаем на то сообщение, по которому собран текст, а не на
+                # последнее в треде: пока модель думала, могло прийти новое.
+                inbound_id=int(inbound["id"]),
             )
         except Exception:
             # Ссылка уже выпущена, но письма с ней не будет. Возвращаем заявку
@@ -845,6 +870,17 @@ def run(
             skipped += 1
             handled += 1
             continue
+        # Атомарности у разбора нет, и сделать её здесь нельзя: `handle`
+        # коммитит по дороге (постановка ответа, заявка на ссылку), а коммит в
+        # SQLite уничтожает точку сохранения. Обернуть проход savepoint'ом
+        # значит получить видимость гарантии вместо гарантии — «no such
+        # savepoint» на первом же сбое.
+        #
+        # Наблюдавшийся симптом закрыт иначе: при провале карточка
+        # переписывается на `autoreply_failed`, поэтому она больше не остаётся
+        # с причиной штатного решения, которого не случилось. Настоящая
+        # атомарность потребовала бы убрать промежуточные коммиты из всей
+        # цепочки — это отдельная работа, и она стоит дороже, чем даёт.
         try:
             result = handle(
                 store, inbound,

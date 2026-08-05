@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bridge49 import autoreply  # noqa: E402
+from bridge49 import autoreply, replies  # noqa: E402
 from bridge49.store import Store, now  # noqa: E402
 
 
@@ -201,6 +201,61 @@ class HandoffRefreshTests(unittest.TestCase):
         row = dict(self.store.one("SELECT * FROM handoffs WHERE id=?", (first,)))
         self.assertEqual(row["reason"], "reply_and_handoff")
         self.assertEqual(row["note"], "исходная заметка")
+
+
+
+
+class ReplyAnchorTests(unittest.TestCase):
+    """Ответ должен уехать реплаем на то, по чему он собран."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.tmp.name) / "b.sqlite")
+        self.store.execute(
+            "INSERT INTO accounts(id, label, role, enabled, synced_at) "
+            "VALUES(821,'a','dm_sender',1,?)", (now(),))
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, created_at, updated_at) "
+            "VALUES('c1','user','x',?,?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES('th1',821,'@x','c1','private_dm','open',?,?)", (now(), now()))
+        for ident, text in ((76797, "Сколько стоит?"), (76799, "И ещё вопрос")):
+            self.store.execute(
+                "INSERT INTO inbound(id, account_id, surface, peer_key, "
+                "peer_username, text, raw, contact_id, sent_at, handled, "
+                "created_at) VALUES(?,821,'private_dm','@x','x',?,'{}','c1',?,1,?)",
+                (ident, text, now(), now()))
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def queued_target(self) -> int:
+        row = self.store.one(
+            "SELECT params FROM tasks WHERE action LIKE 'reply%' "
+            " ORDER BY created_at DESC LIMIT 1")
+        import json
+        return int(json.loads(row["params"])["inbound_notification_id"])
+
+    def test_reply_goes_to_the_message_it_answers(self):
+        """05.08: ответ на 76797 уехал реплаем на 76799."""
+        replies.queue_reply(self.store, text="Тарифы от 29 000 ₽.",
+                            thread_id="th1", inbound_id=76797)
+        self.assertEqual(self.queued_target(), 76797)
+
+    def test_without_an_explicit_message_the_last_one_is_used(self):
+        """Ручной ответ адресуется последнему написавшему — как и раньше."""
+        replies.queue_reply(self.store, text="Отвечаю.", thread_id="th1")
+        self.assertEqual(self.queued_target(), 76799)
+
+    def test_a_foreign_message_does_not_leak_into_this_thread(self):
+        """Чужой id не должен уводить ответ в другой разговор."""
+        replies.queue_reply(self.store, text="Отвечаю.", thread_id="th1",
+                            inbound_id=999999)
+        self.assertEqual(self.queued_target(), 76799)
 
 
 if __name__ == "__main__":
