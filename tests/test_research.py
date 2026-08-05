@@ -262,12 +262,22 @@ class ReadCadenceTests(unittest.TestCase):
         """
         limits = Limits()
 
-        # Дословно их: суточная норма и пауза поперёк флота.
+        # Дословно их: суточная норма аккаунта. Это число про аккаунт —
+        # именно ему прилетает за частые resolve, — и оно остаётся.
         self.assertEqual(limits.read_per_account_daily, 100)
-        self.assertEqual(limits.read_global_interval_min_sec, 60)
-        self.assertEqual(limits.read_global_interval_max_sec, 90)
         self.assertEqual(config.HARD_MAX_READ_DAILY, 100)
-        self.assertEqual(config.HARD_MIN_READ_GLOBAL_INTERVAL_SEC, 60)
+
+        # Осознанно не их: пауза поперёк флота. У них 60-90 с, и это сходилось
+        # с наблюдением выше — одна проверка на 76 секунд по флоту. Но у них
+        # было пять читателей, а у нас четырнадцать: тот же общий гейт даёт
+        # 1440 проверок в сутки на всех, то есть 82 на аккаунт — меньше их же
+        # потолка в сто. Флот упирался в общий гейт раньше, чем аккаунт в свой
+        # лимит, и очередь в четыре тысячи разбиралась двенадцать дней вместо
+        # трёх. Пауза аккаунта при этом не тронута: скорость одного аккаунта
+        # держат его собственные пол и норма.
+        self.assertEqual(limits.read_global_interval_min_sec, 20)
+        self.assertEqual(limits.read_global_interval_max_sec, 30)
+        self.assertEqual(config.HARD_MIN_READ_GLOBAL_INTERVAL_SEC, 15)
 
         # Осознанно не их — и то, и другое про распределение по суткам.
         #
@@ -713,6 +723,51 @@ class frozen_clock:
     def __exit__(self, *exc):
         self.stop()
         return False
+
+
+class ReadPaceTests(unittest.TestCase):
+    """Темп разведки: что защищает аккаунт, а что просто мешало."""
+
+    def limits(self, **kw):
+        from bridge49 import config
+        limits = config.Limits(**kw)
+        return limits, config.clamp(limits)
+
+    def test_account_floors_are_untouched(self):
+        """Сто чтений в сутки и 240 с между ними — это про аккаунт.
+
+        Именно аккаунту прилетает за частые resolve, поэтому эти два пола
+        остаются как были, сколько бы ни ускорялся флот.
+        """
+        from bridge49 import config
+        limits, notes = self.limits(read_per_account_daily=500,
+                                    read_per_account_interval_sec=10)
+        self.assertEqual(limits.read_per_account_daily,
+                         config.HARD_MAX_READ_DAILY)
+        self.assertEqual(limits.read_per_account_interval_sec,
+                         config.HARD_MIN_READ_INTERVAL_SEC)
+        self.assertEqual(len(notes), 2)
+
+    def test_fleet_gate_no_longer_binds_before_the_account_limit(self):
+        """Раньше общий гейт упирался раньше собственного лимита аккаунта.
+
+        Шестьдесят секунд давали 1440 чтений в сутки на весь флот — 82 на
+        аккаунт при четырнадцати читателях, меньше их же потолка в сто.
+        """
+        limits, _ = self.limits()
+        average = (limits.read_global_interval_min_sec
+                   + limits.read_global_interval_max_sec) / 2
+        fleet_capacity = 86400 / average
+        by_accounts = 14 * limits.read_per_account_daily
+        self.assertGreater(fleet_capacity, by_accounts,
+                           "связывать должен аккаунтный лимит, а не общий гейт")
+
+    def test_the_fleet_floor_still_exists(self):
+        from bridge49 import config
+        limits, notes = self.limits(read_global_interval_min_sec=1)
+        self.assertEqual(limits.read_global_interval_min_sec,
+                         config.HARD_MIN_READ_GLOBAL_INTERVAL_SEC)
+        self.assertTrue(notes)
 
 
 if __name__ == "__main__":
