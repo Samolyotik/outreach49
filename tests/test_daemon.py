@@ -105,6 +105,32 @@ class IngestLoopTests(unittest.IsolatedAsyncioTestCase):
             mirror=lambda store, settings: {})
         self.assertEqual(seen["n"], 3)
 
+    async def test_reload_keeps_asking_for_the_bridge_credentials(self):
+        """Перечитывание не должно обнулять реквизиты моста.
+
+        Процесс стартует с реквизитами, а на первом же круге читает настройки
+        заново. Забыть здесь `need_dsn` — значит получить процесс, который
+        поднялся нормально и сразу начал падать на подключении.
+        """
+        seen: list[dict] = []
+
+        def fake_load(home, **kw):
+            seen.append(kw)
+            return self.settings
+
+        original = daemon.load_settings
+        daemon.load_settings = fake_load
+        try:
+            await daemon.run_ingest(
+                self.settings, step=0.0, forum_step=0.0, max_iterations=1,
+                connect=lambda settings: _ok(_FakeBridge()),
+                poll_results=lambda *a: _ok({}),
+                poll_inbound=lambda *a: _ok({}),
+                mirror=lambda store, settings: {})
+        finally:
+            daemon.load_settings = original
+        self.assertEqual(seen, [{"need_dsn": True}])
+
     async def test_mirror_runs_on_its_own_slower_step(self):
         """Зеркало не обязано ходить так же часто, как приём."""
         mirrored = {"n": 0}

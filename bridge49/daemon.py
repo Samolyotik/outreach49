@@ -202,7 +202,11 @@ async def run_ingest(
 ) -> Tally:
     """Цикл приёма. Возвращает сводку, когда его попросили остановиться."""
     stop = stop or asyncio.Event()
-    reload_settings = reload_settings or (lambda: load_settings(settings.home))
+    # `need_dsn=True` здесь не украшение: без него перечитывание настроек на
+    # первом же круге подменяет рабочие реквизиты моста пустыми, и процесс
+    # начинает падать на подключении — при том что стартовал он нормально.
+    reload_settings = reload_settings or (
+        lambda: load_settings(settings.home, need_dsn=True))
     tally = Tally()
     store = Store(settings.db_path)
     bridge: object | None = None
