@@ -47,9 +47,27 @@ PROVIDER_ID = "outreach49"
 #: лучше отсеять раньше, чем тратить запрос к модели.
 REPLY_ROLES = frozenset({"channel_sender", "chat_sender", "dm_sender"})
 
+#: Чем подменяем пустой текст. Голосовое и файл приезжают без текста, и разбор
+#: на них падал исключением: движок требует непустое сообщение. Человек при
+#: этом не получал ничего — 05.08 так пропал собеседник, который накануне писал
+#: «Направьте информацию, изучим». Подмена перенесена из прежнего контура: она
+#: даёт движку понять, что сообщение было, и не выдумывает его содержания.
+ATTACHMENT_PLACEHOLDER = "[Вложение без текста]"
+
 #: Решения, после которых человеку ничего не отправляется.
-SILENT_DECISIONS = frozenset({"opt_out", "ignore", "pause_conversation",
-                              "hold_for_review"})
+#:
+#: `pause_conversation` отсюда убран, и это не послабление. Нормализатор
+#: схлопывает в это имя два разных действия движка: `reply_and_pause`, где
+#: текст обязателен и непуст, и голый `pause`, где текста нет вовсе. Держать их
+#: вместе в списке молчаливых значило выбрасывать написанный ответ: за 05.08
+#: так пропало 13 текстов из 14, от 24 до 335 знаков, при уверенности модели
+#: 0.98–0.99. Промпт при этом прямо требует обратного — «обычный вежливый отказ
+#: не оставляй без ответа».
+#:
+#: Голый `pause` после этого ничего не отправит сам: текста у него нет, а
+#: нормализатор роняет ответ, если текст пришёл с действием, которое отвечать
+#: не должно. То есть развилка держится не на этом списке, а на самом движке.
+SILENT_DECISIONS = frozenset({"opt_out", "ignore", "hold_for_review"})
 
 #: Решения, после которых менеджеру заводится карточка.
 #:
@@ -298,7 +316,7 @@ def build_context(
         "account_label": str(account["label"] or ""),
         "role": role,
         "peer_key": str(inbound["peer_key"]),
-        "text": str(inbound["text"] or ""),
+        "text": str(inbound["text"] or "") or ATTACHMENT_PLACEHOLDER,
         "received_at": str(inbound["sent_at"] or inbound["created_at"] or ""),
         "conversation_id": str(thread["id"]),
         "campaign_id": str(thread["campaign_id"] or ""),
@@ -326,12 +344,32 @@ def remember_discovery(store: Store, thread: dict, update: dict) -> None:
 
 
 def open_handoff(store: Store, thread: dict, reason: str, note: str = "") -> str:
-    """Завести карточку менеджеру, если по диалогу её ещё нет."""
+    """Завести карточку менеджеру или освежить уже открытую.
+
+    Вторая карточка по одному диалогу не нужна — но и молча возвращать первую
+    нельзя. Раньше повтор не менял в ней ничего, и получалось два дефекта
+    сразу. Собеседник, которому третьи сутки обещают менеджера, не создавал
+    никакого нового сигнала: его карточка от позавчера так и лежала с
+    нетронутой отметкой времени, неотличимая от вчерашних. А содержимое
+    отставало от разговора — карточка говорила «сфера подтверждена, запустить
+    тест», когда машина уже написала человеку, что схема ему не подходит.
+
+    Поэтому повтор освежает карточку: новая причина, новая заметка, новое
+    время. Форум-постер видит изменение и выносит её заново.
+    """
     existing = store.one(
-        "SELECT id FROM handoffs WHERE thread_id = ? AND status IN ('new','taken')",
+        "SELECT id, reason, note FROM handoffs "
+        " WHERE thread_id = ? AND status IN ('new','taken')",
         (thread["id"],),
     )
     if existing is not None:
+        store.execute(
+            "UPDATE handoffs SET reason = ?, note = ?, updated_at = ? "
+            " WHERE id = ?",
+            (reason or existing["reason"], note or existing["note"],
+             now(), existing["id"]),
+        )
+        store.commit()
         return str(existing["id"])
     handoff_id = new_id("handoff")
     store.execute(
