@@ -103,6 +103,9 @@ def main() -> int:
 
     knowledge = knowledge_text()
     by_id = {str(row.get("btm_id")): row for row in rows}
+    # Считается по всей выборке, а не по батчу: шаблонный постинг видно только
+    # тогда, когда рядом лежат остальные копии того же блока.
+    repeats = contact_fit.template_repeats(rows)
     verdicts: list[dict] = []
     broken = 0
 
@@ -110,7 +113,7 @@ def main() -> int:
         chunk = rows[start:start + args.batch]
         ids = [str(row.get("btm_id")) for row in chunk]
         try:
-            answer = ask(contact_fit.build_prompt(chunk, knowledge),
+            answer = ask(contact_fit.build_prompt(chunk, knowledge, repeats),
                          timeout=args.timeout)
             verdicts.extend(contact_fit.validate(answer, ids))
         except (RuntimeError, contact_fit.FitError) as exc:
