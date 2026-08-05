@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import random
 import sqlite3
 import sys
@@ -16,6 +17,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# На боевом боксе `/etc/outreach49/alerts.env` существует, и любой прогон, где
+# сторож решит сообщить о находке, ушёл бы настоящим сообщением в админ-форум.
+# Путь перебивается на заведомо отсутствующий файл: `TelegramTarget.from_file`
+# на нём возвращает None, то есть «доставка не настроена» — это не ошибка.
+# Явное значение, а не setdefault: чужая переменная в окружении не должна
+# возвращать тестам дорогу к боевым реквизитам.
+os.environ["BRIDGE49_ALERTS"] = str(Path(__file__).with_name("alerts.env.absent"))
 
 from bridge49 import accounts as accounts_mod  # noqa: E402
 from bridge49 import (alerts, catalog, config, dispatcher, entities, planner,  # noqa: E402
@@ -1559,8 +1568,12 @@ class WatchdogTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _run(self):
+        # Доставка здесь выключена намеренно: этот класс проверяет находки, а
+        # не отправку, — её поведение целиком в AlertDeliveryTests с подменённым
+        # `send`. Без этого прогон тестов на боксе слал в админ-форум четыре
+        # настоящие тревоги с выдуманными числами фикстуры.
         return asyncio.run(
-            watchdog.run(self.store, self.settings, with_bridge=False)
+            watchdog.run(self.store, self.settings, with_bridge=False, notify=False)
         )
 
     def _poll_logged(self, *, minutes_ago: int) -> None:
@@ -1652,6 +1665,15 @@ class WatchdogTests(unittest.TestCase):
             watchdog.Finding("поллер", watchdog.CRITICAL, "7 мин назад")
         )
         self.assertEqual(watchdog.fingerprint(first), watchdog.fingerprint(second))
+
+
+class AlertSafetyNetTests(unittest.TestCase):
+    """Прогон тестов не должен дотягиваться до боевых реквизитов тревог."""
+
+    def test_default_target_is_absent_under_tests(self):
+        # Кто-то однажды забудет `notify=False`; страховкой служит подменённый
+        # путь к alerts.env — без файла адресата нет, и отправлять некуда.
+        self.assertIsNone(alerts.TelegramTarget.from_file())
 
 
 class AlertDeliveryTests(unittest.TestCase):
