@@ -70,5 +70,39 @@ class SchemaParityTests(unittest.TestCase):
             self.assertIn(field, shown)
 
 
+class RepairInstructionTests(unittest.TestCase):
+    """Второй заход обязан знать, чего именно не хватило в первом.
+
+    Поля остаются обязательными — это осознанное решение контракта. Значит
+    единственный способ спасти ход, когда модель забыла ключ, — попросить
+    заново и назвать пропажу поимённо. Общей фразы «верни полный контракт»
+    ей не хватает: свой ответ она уже считает полным.
+    """
+
+    REASON = ("presales_v2_schema_missing_fields:"
+              "canonical_sector_id,client_sector_text,sector_confidence")
+
+    def test_the_missing_keys_are_named(self):
+        text = presales_v2.presales_v2_repair_instruction(self.REASON)
+        for field in ("canonical_sector_id", "client_sector_text",
+                      "sector_confidence"):
+            self.assertIn(field, text)
+
+    def test_the_empty_string_is_offered_as_a_way_out(self):
+        """Иначе модель снова пропустит ключ, которому нечего сказать."""
+        text = presales_v2.presales_v2_repair_instruction(self.REASON)
+        self.assertIn("пустую строку", text)
+
+    def test_other_reasons_keep_their_own_wording(self):
+        text = presales_v2.presales_v2_repair_instruction(
+            "presales_v2_free_test_requires_confirmed_sector")
+        self.assertIn("Сфера человека ещё не подтверждена", text)
+        self.assertNotIn("не было ключей", text)
+
+    def test_an_unknown_reason_still_gets_the_general_part(self):
+        text = presales_v2.presales_v2_repair_instruction("что-то своё")
+        self.assertIn("hard-валидацию", text)
+
+
 if __name__ == "__main__":
     unittest.main()

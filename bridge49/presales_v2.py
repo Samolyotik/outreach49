@@ -803,7 +803,21 @@ def close_external_process_pipes(process: subprocess.Popen[str]) -> None:
 
 def presales_v2_repair_instruction(reason: str) -> str:
     sector_instruction = ""
-    if reason == "presales_v2_free_test_requires_confirmed_sector":
+    if reason.startswith("presales_v2_schema_missing_fields:"):
+        # Общей фразы «верни полный контракт» модели не хватает: она уже
+        # считает свой ответ полным, иначе не отдала бы его. Поэтому на втором
+        # заходе называем пропавшие ключи поимённо и напоминаем, что пустая
+        # строка — законный ответ. Без этого повтор терял те же поля, что и
+        # первый заход, и живой человек оставался без ответа: ровно так в ночь
+        # на 06.08 пропали три поля сопоставления сферы из семнадцати.
+        names = reason.split(":", 1)[1]
+        sector_instruction = (
+            f" В прошлом ответе не было ключей: {names}. Верни их обязательно, "
+            "каждый как отдельное свойство верхнего уровня. Если значения нет, "
+            "верни пустую строку — пропускать ключ нельзя, даже когда сказать "
+            "по нему нечего."
+        )
+    elif reason == "presales_v2_free_test_requires_confirmed_sector":
         sector_instruction = (
             " Сфера человека ещё не подтверждена. Не создавай handoff и не обещай "
             "менеджера. Верни action=reply, handoff_kind=none, пустой "
