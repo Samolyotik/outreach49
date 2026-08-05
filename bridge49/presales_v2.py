@@ -625,6 +625,22 @@ def build_presales_v2_prompt(
                 "exact outreach_sector_id from conversation_context."
                 "automatic_free_test_sector_catalog or empty string"
             ),
+            # Три поля сопоставления сферы. Их держит `PRESALES_V2_REQUIRED_FIELDS`,
+            # и отсутствие любого из них валит весь ход в technical_failure —
+            # а он молчит по замыслу. Значит список полей здесь и там обязан
+            # совпадать буква в букву: инструкции в прозе выше модель читает,
+            # но форму ответа копирует отсюда. Расхождение стоило нам первого
+            # же живого разговора после переезда 06.08: человек согласился на
+            # тест и не получил ничего.
+            "client_sector_text": (
+                "the person's own wording of their sector, verbatim, no "
+                "paraphrase; empty string if they never named it"
+            ),
+            "canonical_sector_id": (
+                "exact canonical_sector_id from conversation_context."
+                "sector_matching_catalog or empty string"
+            ),
+            "sector_confidence": "exact|likely|ambiguous|none or empty string",
             "knowledge_gap": "string",
             "collected_fields_update": "object<string,string>",
             "coverage_complete": "boolean",
