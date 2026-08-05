@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import (alerts, autoreply, catalog, config, direct_invite, dispatcher,
-               entities, forum, planner, pollers, replies, report, research,
-               watchdog)
+from . import (alerts, autoreply, catalog, config, daemon, direct_invite,
+               dispatcher, entities, forum, planner, pollers, replies, report,
+               research, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -767,9 +767,15 @@ def cmd_forum(args) -> int:
             return 1
         print(report.good("отправлено, message_id=%s" % result.get("message_id")))
         return 0
-    with _store(settings) as store:
-        print(report.kv(sorted(forum.run(store, limit=args.limit,
-                                         actor=args.actor).items())))
+    # Зеркало пишет те же таблицы, что и приём, поэтому живёт в той же зоне.
+    try:
+        with daemon.zone_lock(settings, daemon.ZONE_INGEST, wait_sec=60.0):
+            with _store(settings) as store:
+                print(report.kv(sorted(forum.run(store, limit=args.limit,
+                                                 actor=args.actor).items())))
+    except daemon.ZoneBusy as exc:
+        print(report.bad(str(exc)))
+        return 1
     return 0
 
 
@@ -791,18 +797,57 @@ def cmd_arm(args) -> int:
 
 def cmd_poll(args) -> int:
     settings = _settings(args, need_dsn=True)
-    with _store(settings) as store:
-        if args.what in ("results", "all"):
-            result = asyncio.run(pollers.poll_results(store, settings, actor=args.actor))
-            print(report.section("результаты команд"))
-            print(report.kv(sorted(result.items())))
-        if args.what in ("inbound", "all"):
-            result = asyncio.run(
-                pollers.poll_inbound(store, settings, limit=args.limit,
-                                     actor=args.actor)
-            )
-            print(report.section("входящие"))
-            print(report.kv(sorted(result.items())))
+    # Замок зоны приёма. Пока приём живёт таймером, ожидания практически не
+    # бывает: прогон занимает доли секунды. Он нужен на потом — когда зону
+    # займёт постоянный процесс, ручной прогон рядом с ним был бы вторым
+    # писателем тех же таблиц.
+    try:
+        with daemon.zone_lock(settings, daemon.ZONE_INGEST, wait_sec=60.0):
+            with _store(settings) as store:
+                if args.what in ("results", "all"):
+                    result = asyncio.run(
+                        pollers.poll_results(store, settings, actor=args.actor))
+                    print(report.section("результаты команд"))
+                    print(report.kv(sorted(result.items())))
+                if args.what in ("inbound", "all"):
+                    result = asyncio.run(
+                        pollers.poll_inbound(store, settings, limit=args.limit,
+                                             actor=args.actor)
+                    )
+                    print(report.section("входящие"))
+                    print(report.kv(sorted(result.items())))
+    except daemon.ZoneBusy as exc:
+        print(report.bad(str(exc)))
+        return 1
+    return 0
+
+
+def cmd_daemon(args) -> int:
+    """Постоянный процесс одной зоны."""
+    settings = _settings(args, need_dsn=True)
+    try:
+        with daemon.zone_lock(settings, args.zone):
+            async def main() -> daemon.Tally:
+                stop = asyncio.Event()
+                daemon.install_signal_handlers(stop)
+                print(report.section(f"постоянный процесс: {args.zone}"))
+                print(f"дом    {settings.home}")
+                print(f"база   {settings.db_path}")
+                print(f"шаг    {args.step} с, зеркало {args.forum_step} с")
+                sys.stdout.flush()
+                return await daemon.run_ingest(
+                    settings,
+                    step=args.step,
+                    forum_step=args.forum_step,
+                    max_iterations=1 if args.once else None,
+                    stop=stop,
+                )
+
+            tally = asyncio.run(main())
+    except daemon.ZoneBusy as exc:
+        print(report.bad(str(exc)))
+        return 1
+    print(report.kv(sorted(tally.as_dict().items())))
     return 0
 
 
@@ -1270,6 +1315,18 @@ def build_parser() -> argparse.ArgumentParser:
                    choices=("all", "results", "inbound"))
     p.add_argument("--limit", type=int, default=500)
     p.set_defaults(func=cmd_poll)
+
+    p = sub.add_parser("daemon", help="постоянный процесс одной зоны")
+    p.add_argument("zone", choices=(daemon.ZONE_INGEST,),
+                   help="какая зона: приём входящих и зеркало")
+    p.add_argument("--step", type=float, default=daemon.DEFAULT_STEP_SEC,
+                   help="секунд между кругами приёма")
+    p.add_argument("--forum-step", type=float,
+                   default=daemon.DEFAULT_FORUM_STEP_SEC,
+                   help="секунд между прогонами зеркала")
+    p.add_argument("--once", action="store_true",
+                   help="один круг и выход — для проверки")
+    p.set_defaults(func=cmd_daemon)
 
     p = sub.add_parser("send", help="точечно отправить сообщение получателю")
     p.add_argument("--account", type=int, required=True, help="с какого аккаунта")

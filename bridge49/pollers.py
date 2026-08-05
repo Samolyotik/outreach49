@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 from .config import Settings
@@ -14,12 +15,29 @@ from .store import Store, dumps, loads, new_id, now
 #: Ключи курсоров в таблице state.
 INBOUND_CURSOR = "inbound_cursor"
 
+
+@asynccontextmanager
+async def _bridge(settings: Settings, shared: RadarBridge | None):
+    """Мост: чужой, если дали, свой — если нет.
+
+    Разовому прогону из CLI проще открыть соединение и закрыть его. Но
+    постоянный процесс делает это же по несколько раз в минуту, и каждое
+    открытие — новый пул asyncpg с TLS до PgBouncer. Поэтому он передаёт свой
+    мост сюда, а поведение самих функций от этого не меняется ни на шаг.
+    """
+    if shared is not None:
+        yield shared
+        return
+    async with RadarBridge(settings.dsn) as owned:
+        yield owned
+
 #: Ответы, после которых диалогом должен заняться человек.
 HANDOFF_SURFACES = ("private_dm", "channel_dm")
 
 
 async def poll_results(
-    store: Store, settings: Settings, *, actor: str = "cli"
+    store: Store, settings: Settings, *, actor: str = "cli",
+    bridge: RadarBridge | None = None,
 ) -> dict:
     """Подтянуть статусы всех задач, которые ждут ответа моста."""
     rows = store.query(
@@ -35,8 +53,8 @@ async def poll_results(
         return {"checked": 0, "updated": 0, "still_running": 0}
 
     by_command = {int(row["command_id"]): row["id"] for row in rows}
-    async with RadarBridge(settings.dsn) as bridge:
-        results = await bridge.results(sorted(by_command))
+    async with _bridge(settings, bridge) as link:
+        results = await link.results(sorted(by_command))
 
     updated = running = 0
     for record in results:
@@ -210,12 +228,13 @@ def adopt_stranger(store: Store, peer: dict, peer_key: str) -> str | None:
 
 
 async def poll_inbound(
-    store: Store, settings: Settings, *, limit: int = 500, actor: str = "cli"
+    store: Store, settings: Settings, *, limit: int = 500, actor: str = "cli",
+    bridge: RadarBridge | None = None,
 ) -> dict:
     """Забрать новые входящие. Курсор — возрастающий system_notification.id."""
     cursor = int(store.get_state(INBOUND_CURSOR, "0") or 0)
-    async with RadarBridge(settings.dsn) as bridge:
-        rows = await bridge.inbound(cursor, limit)
+    async with _bridge(settings, bridge) as link:
+        rows = await link.inbound(cursor, limit)
 
     stored = replies = failures = 0
     for record in rows:
