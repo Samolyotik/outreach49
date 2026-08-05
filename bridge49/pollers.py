@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
+from . import errors
 from .config import Settings
 from .radar import RadarBridge
 from .store import Store, dumps, loads, new_id, now
@@ -41,7 +42,7 @@ async def poll_results(
 ) -> dict:
     """Подтянуть статусы всех задач, которые ждут ответа моста."""
     rows = store.query(
-        "SELECT id, command_id FROM tasks "
+        "SELECT id, command_id, account_id FROM tasks "
         "WHERE command_id IS NOT NULL AND ("
         "state = 'queued' OR "
         "(state = 'failed' AND outcome = 'outcome_unknown') OR "
@@ -53,6 +54,7 @@ async def poll_results(
         return {"checked": 0, "updated": 0, "still_running": 0}
 
     by_command = {int(row["command_id"]): row["id"] for row in rows}
+    account_of = {row["id"]: row["account_id"] for row in rows}
     async with _bridge(settings, bridge) as link:
         results = await link.results(sorted(by_command))
 
@@ -111,6 +113,18 @@ async def poll_results(
             ),
         )
         _touch_thread_outbound(store, task_id, result)
+        if state in ("failed", "skipped") and isinstance(error, dict):
+            # Разбор неудачи идёт здесь, а не в диспетчере: сюда приезжает
+            # исход от Radar, и только здесь известно, чем именно кончилось.
+            errors.record(
+                store,
+                task_id=task_id,
+                account_id=account_of.get(task_id),
+                code=error.get("code"),
+                message=error.get("message"),
+                home=settings.home,
+                actor=actor,
+            )
         updated += 1
 
     store.log(actor, "poll.results", "",

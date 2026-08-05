@@ -30,7 +30,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import accounts as accounts_mod
-from . import catalog, replies, report
+from . import catalog, errors, replies, report
 from .config import Settings
 from .radar import (
     BridgeError,
@@ -516,6 +516,19 @@ def preflight(
     ok, why = accounts_mod.usable(account, task["action"])
     if not ok:
         raise DispatchBlocked(why)
+
+    # Аккаунт, которому Telegram сказал «замолчи», Radar уже держит своим
+    # кулдауном. Продолжать давать ему задачи бессмысленно вдвойне: они
+    # вернутся отказом и потратят дневную норму, а в журнале это будет
+    # выглядеть как череда новых поломок вместо одной старой.
+    #
+    # Рубильник спрашивается здесь, а не только при записи: снятый рубильник
+    # обязан немедленно отпускать удержания, а не ждать, пока они истекут.
+    if errors.switch_enabled(settings.home):
+        hold = errors.held_until(store, account_id)
+        if hold is not None:
+            raise DispatchBlocked(
+                f"аккаунт придержан до {hold[0]}: {hold[1]}")
 
     contact = store.one(
         "SELECT opted_out FROM contacts WHERE id = ?", (task["contact_id"],)
