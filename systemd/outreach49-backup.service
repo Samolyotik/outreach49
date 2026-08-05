@@ -1,0 +1,18 @@
+[Unit]
+Description=outreach49 — проверенная резервная копия базы
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Запускается системным python, а не venv контура: копия обязана сниматься и
+# тогда, когда пакет сломан незавершённым деплоем, а база ещё цела. Зависимость
+# у скрипта одна — стандартная библиотека.
+ExecStart=/usr/bin/python3 /opt/outreach49/scripts/backup_db.py \
+    --db /opt/outreach49/var/bridge49.sqlite \
+    --output-dir /var/backups/outreach49 \
+    --keep 7
+# Ненулевой код — это непройденная проверка целостности или неполная копия.
+# Такое должно быть видно как отказ юнита, а не утонуть в журнале.
+TimeoutStartSec=600
