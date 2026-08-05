@@ -35,6 +35,36 @@ class GoodTextTests(unittest.TestCase):
         self.assertLessEqual(len(GOOD), first_touch.MAX_LENGTH)
 
 
+class MirrorTests(unittest.TestCase):
+    """Промпт обязан предупреждать о зеркале.
+
+    Проверить сам текст на зеркало нельзя: оборот «которым нужны такие
+    события» законен, когда человек эти события и продаёт. Отличает их только
+    смысл исходного сообщения, а его на выходе уже нет. Значит, единственное
+    место, где дефект ловится, — инструкция модели, и она не должна тихо
+    вернуться к прежней формулировке.
+    """
+
+    def setUp(self):
+        self.prompt = first_touch.build_prompt([{
+            "row_id": "1",
+            "primary_signal": {"category_code": "HOT",
+                               "message_text": "Ищу авитолога",
+                               "source_title": "чат", "published_at": ""},
+            "signals": [],
+        }])
+
+    def test_prompt_asks_for_what_the_addressee_sells(self):
+        self.assertIn("продаёт САМ АДРЕСАТ", self.prompt)
+
+    def test_prompt_names_the_back_reference_trap(self):
+        self.assertIn("которым нужны такие услуги", self.prompt)
+        self.assertIn("указывает назад", self.prompt)
+
+    def test_prompt_gives_a_fallback_when_the_niche_is_unknown(self):
+        self.assertIn("которым нужны ваши товары и услуги", self.prompt)
+
+
 class RejectionTests(unittest.TestCase):
     """Каждое правило — с объяснением, что увидит адресат при нарушении."""
 
