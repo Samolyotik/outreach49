@@ -34,6 +34,7 @@ from typing import Any
 
 from . import accounts as accounts_mod
 from . import direct_invite
+from . import outreach_texts
 from . import replies
 from .inbound_decision import decide_inbound_reply
 from .presales_context import non_silent_boundary_reply
@@ -262,6 +263,51 @@ def discovery_context(thread: dict) -> dict[str, str]:
             if str(k).strip() and str(v).strip()}
 
 
+def outreach_sector_of_thread(store: Store, thread: dict) -> str:
+    """Сфера, о которой мы заговорили с этим человеком первыми.
+
+    Движок узнаёт сферу только из слов собеседника, и это правильно почти
+    всегда. Но у полос «чаты» и «личка каналов» текст первого касания сам
+    называет сферу: он написан про подбор и привоз авто и ни про что другое.
+    Человек, ответивший на такое сообщение «Согласны», уже сказал, о чём речь,
+    — просто не повторил вслух того, что написали ему мы.
+
+    Без этого выходило нелепо: 06.08 владелец канала про авто из Кореи
+    согласился на бесплатный тест, а в ответ получил вопрос, в какой он сфере.
+
+    Возвращаем сферу только когда первое касание восстанавливается из ника
+    посимвольно (`outreach_texts.sector_of_first_touch`). Ручная отправка,
+    чужой текст, письмо из другой полосы — всё это не совпадёт, и тогда сфера
+    остаётся неизвестной, как и была. Догадок здесь быть не должно: выдача
+    доступа в чужую тестовую группу отзывается только руками.
+
+    Личку людей (`send_private_dm`) сюда намеренно не берём: там письма
+    написаны под конкретного человека из лидов и сферы у них разные.
+    """
+    contact_id = str(thread.get("contact_id") or "")
+    if not contact_id:
+        return ""
+    row = store.one(
+        "SELECT c.username, t.params FROM tasks t "
+        "  JOIN contacts c ON c.id = t.contact_id "
+        " WHERE t.contact_id = ? AND t.state = 'done' "
+        "   AND t.action IN ('send_channel_dm', 'send_public_chat_message') "
+        " ORDER BY t.dispatched_at LIMIT 1",
+        (contact_id,),
+    )
+    if row is None:
+        return ""
+    try:
+        params = json.loads(str(row["params"] or "{}"))
+    except ValueError:
+        return ""
+    if not isinstance(params, dict):
+        return ""
+    return outreach_texts.sector_of_first_touch(
+        str(row["username"] or ""), str(params.get("text") or "")
+    )
+
+
 def account_role_for(store: Store, inbound: dict) -> str:
     """Роль аккаунта, по которой определяется канал согласия.
 
@@ -336,6 +382,11 @@ def build_context(
             branch_context = branch.context_for_sector(candidate)
             if branch_context is not None:
                 break
+
+    if branch_context is None:
+        candidate = outreach_sector_of_thread(store, thread)
+        if candidate:
+            branch_context = branch.context_for_sector(candidate)
 
     return {
         "provider_id": PROVIDER_ID,
