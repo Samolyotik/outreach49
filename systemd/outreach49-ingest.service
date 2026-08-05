@@ -1,0 +1,34 @@
+[Unit]
+Description=outreach49 — приём: результаты, входящие и зеркало
+After=network-online.target
+# Слишком частые перезапуски — это не самоизлечение, а маскировка. Пусть
+# упадёт окончательно и станет виден сторожу и человеку.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/outreach49
+Environment=BRIDGE49_HOME=/opt/outreach49
+# Окружение — объединение прежних poll и forum, и это не формальность.
+# Токен бота и id группы заявок живут в production.env, а id группы диалогов —
+# только в drop-in к юниту зеркала. Юнит, написанный по образцу poll (там
+# ничего этого нет), не упал бы с ошибкой: зеркало молча полило бы всю
+# переписку в группу заявок и перепутало темы.
+EnvironmentFile=/etc/tgradar-outreach/production.env
+Environment=OUTREACH_DIALOG_TELEGRAM_CHAT_ID=-1004447957104
+ExecStart=/opt/outreach49/bin/bridge49 daemon ingest --step 5 --forum-step 60
+
+# Процесс держит зону: второго такого рядом быть не должно. Замок он берёт
+# сам, но systemd об этом не знает — поэтому запрещаем ему запускать вторую
+# копию по недосмотру.
+Restart=on-failure
+RestartSec=10s
+
+# SIGTERM для цикла означает «доработай круг и выйди». Круг короткий, но при
+# зависшем сетевом вызове может тянуться — даём запас, а потом убиваем.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
