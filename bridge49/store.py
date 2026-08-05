@@ -140,9 +140,15 @@ CREATE INDEX IF NOT EXISTS idx_tasks_account_day ON tasks(account_id, dispatched
 --
 -- От двух одновременных ответов защищает не индекс, а проверка в queue_reply:
 -- она смотрит, нет ли уже поставленного и неотправленного.
+--
+-- Ответов у нас два вида, и исключать надо оба. Сначала исключили только
+-- личку, а `reply_channel_dm` остался под индексом — то есть на поверхности
+-- каналов машина отвечала человеку ровно один раз за всё время, а дальше
+-- всегда заводила карточку. Снаружи это выглядит не как отказ, а как
+-- молчание: в журнале три IntegrityError, в диалоге тишина.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_campaign_contact
   ON tasks(campaign_id, contact_id)
-  WHERE action <> 'reply_private_dm';
+  WHERE action NOT IN ('reply_private_dm', 'reply_channel_dm');
 
 -- Глобальная история касаний: кому мы вообще писали, независимо от кампании.
 -- Без неё вторая кампания на пересекающийся сегмент шлёт человеку второе
@@ -306,6 +312,26 @@ CREATE INDEX IF NOT EXISTS idx_events_at ON events(at DESC);
 """
 
 
+#: Условие частичной уникальности задач. Держится отдельной строкой, потому
+#: что живёт в двух местах сразу: в схеме для новой базы и в пересоздании
+#: индекса для уже работающей. Разъедутся эти два места — и правило будет
+#: разным в зависимости от того, когда базу завели.
+_TASKS_UNIQUE_WHERE = "action NOT IN ('reply_private_dm', 'reply_channel_dm')"
+
+
+def _index_where(sql: str | None) -> str:
+    """Условие существующего индекса, приведённое к сравнимому виду.
+
+    SQLite хранит текст запроса как его написали, вместе с переносами строк и
+    отступами. Сравнивать надо смысл, а не форматирование.
+    """
+    text = str(sql or "")
+    head, _, tail = text.partition("WHERE")
+    if not tail:
+        return ""
+    return " ".join(tail.split())
+
+
 def now() -> str:
     """UTC ISO-8601 с секундной точностью — единый формат времени в базе."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -386,18 +412,28 @@ class Store:
         превращение сплошной уникальности в частичную приходится делать руками:
         иначе в уже живущей базе останется старое правило, и второй ответ
         одному человеку так и будет падать.
+
+        Сравнивать надо само условие, а не наличие слова ``WHERE``. Проверка
+        «частичный ли индекс» отвечает «да» на любое условие, включая
+        устаревшее, — и вторая правка этого же правила молча не доезжает до
+        живых баз. Ровно это и случилось с ответами в каналах.
         """
+        wanted = _TASKS_UNIQUE_WHERE
         row = self.conn.execute(
             "SELECT sql FROM sqlite_master "
             " WHERE type = 'index' AND name = 'idx_tasks_campaign_contact'"
         ).fetchone()
-        if row is None or "WHERE" in str(row["sql"] or "").upper():
+        if row is not None and _index_where(row["sql"]) == wanted:
             return
-        self.conn.execute("DROP INDEX idx_tasks_campaign_contact")
+        if row is not None:
+            self.conn.execute("DROP INDEX idx_tasks_campaign_contact")
+        # Новое условие строго шире прежнего: под индексом остаётся меньше
+        # строк, чем раньше. Значит пересоздание не может упереться в уже
+        # существующие дубли и не требует предварительной чистки.
         self.conn.execute(
             "CREATE UNIQUE INDEX idx_tasks_campaign_contact "
             "  ON tasks(campaign_id, contact_id) "
-            "  WHERE action <> 'reply_private_dm'"
+            f"  WHERE {_TASKS_UNIQUE_WHERE}"
         )
 
     # -- базовые операции ---------------------------------------------------
