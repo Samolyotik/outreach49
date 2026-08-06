@@ -9,7 +9,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-08-03T12:48:56.370178+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -73,7 +73,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:21:50.677262+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -160,7 +160,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-30T17:59:25.671545+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -247,7 +247,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-07-28T17:25:04.754115+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -340,24 +340,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:22:50.944554+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -433,7 +435,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-07-28T17:29:23.902592+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -516,7 +518,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-26T22:59:21.311543+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -552,7 +554,8 @@
           "_completed_runs": 1
         },
         "update_bio": {
-          "tickets": 46296
+          "tickets": 46296,
+          "_completed_runs": 1
         },
         "update_name": {
           "enabled": true,
@@ -603,7 +606,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-27T22:40:17.575963+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -695,29 +698,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-27T22:40:15.140984+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "source_reader"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
+        "check_public_chat_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
-        "mark_messages_read",
-        "reply_private_dm",
-        "send_chat_action",
-        "send_private_dm",
-        "send_typing",
-        "sync_private_dm_replies",
-        "view_messages"
+        "get_supergroup",
+        "resolve_channel_dm",
+        "search_public_chat"
       ],
-      "publish_inbound": true,
-      "outbound_attachments_enabled": true,
+      "publish_inbound": false,
+      "outbound_attachments_enabled": false,
       "allow_immediate_visible_actions": true
     },
     "worker_actions": {
@@ -780,7 +780,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-28T10:06:08.648096+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -862,7 +862,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-28T14:49:50.789098+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -949,8 +949,8 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
-    "last_seen_at": "2026-07-28T17:32:47.226543+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_seen_at": "2026-08-06T11:42:17.744275+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
@@ -1041,24 +1041,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-30T21:12:54.822842+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -1127,7 +1129,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-08-02T22:07:49.150451+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1210,7 +1212,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:23:51.468582+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1302,7 +1304,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:24:51.707094+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1399,24 +1401,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-26T23:32:18.159031+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -1484,7 +1488,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:57:32.140903+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1571,7 +1575,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-26T23:09:08.160765+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1658,7 +1662,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-27T02:15:55.485013+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1750,24 +1754,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-28T10:32:02.618205+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -1835,7 +1841,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-28T10:40:27.501870+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1917,7 +1923,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-28T10:54:42.612401+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2004,7 +2010,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-28T10:09:37.861881+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2096,24 +2102,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-27T02:51:04.458549+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -2181,7 +2189,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:25:50.490327+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2268,7 +2276,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:26:51.137002+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2360,7 +2368,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-26T23:46:37.038551+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2452,24 +2460,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
-    "last_seen_at": "2026-07-28T17:37:00.539708+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_seen_at": "2026-08-04T09:33:33.355002+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -2537,7 +2547,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-27T00:09:49.686363+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2619,7 +2629,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-27T10:41:27.449204+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2707,7 +2717,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-08-02T22:08:37.500823+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2799,24 +2809,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-27T02:43:09.996678+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -2885,7 +2897,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-28T02:34:43.196799+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2967,7 +2979,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-26T23:52:16.870927+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3054,7 +3066,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-28T10:40:15.848049+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3146,24 +3158,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-27T02:08:32.910970+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -3231,7 +3245,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-02T16:27:51.957671+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3318,7 +3332,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-07-28T17:21:23.012550+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3406,7 +3420,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-30T14:52:48.793845+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3498,24 +3512,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-26T22:44:11.751413+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -3584,7 +3600,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-08-02T22:08:18.709273+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3667,7 +3683,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-27T01:11:15.766772+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3754,7 +3770,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-07-26T22:47:12.622601+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3846,24 +3862,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-27T03:11:30.739984+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -3931,7 +3949,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-07-27T11:15:35.468409+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3979,7 +3997,8 @@
           "_completed_runs": 1
         },
         "update_username": {
-          "tickets": 46296
+          "tickets": 46296,
+          "_completed_runs": 1
         },
         "download_avatars": {
           "enabled": true,
@@ -4013,7 +4032,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-07-28T17:40:42.378317+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4101,7 +4120,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-07-28T17:45:41.117368+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4193,24 +4212,26 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-07-27T02:29:06.911534+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
-        "dm_sender"
+        "channel_sender"
       ],
       "enabled": true,
       "allowed_actions": [
+        "check_channel_dm_metadata",
         "command_dry_run",
-        "create_private_chat",
         "gateway_capabilities",
         "get_me",
         "mark_messages_read",
         "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
         "send_chat_action",
-        "send_private_dm",
         "send_typing",
+        "sync_channel_dm_replies",
         "sync_private_dm_replies",
         "view_messages"
       ],
@@ -4279,7 +4300,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-07-28T20:17:41.402257+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4362,119 +4383,8 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-08-03T11:32:12.693415+00:00",
-    "business_binding_epoch": 1,
-    "outreach": {
-      "roles": [
-        "dm_sender"
-      ],
-      "enabled": true,
-      "allowed_actions": [
-        "command_dry_run",
-        "create_private_chat",
-        "gateway_capabilities",
-        "get_me",
-        "mark_messages_read",
-        "reply_private_dm",
-        "send_chat_action",
-        "send_private_dm",
-        "send_typing",
-        "sync_private_dm_replies",
-        "view_messages"
-      ],
-      "publish_inbound": true,
-      "outbound_attachments_enabled": true,
-      "allow_immediate_visible_actions": true
-    },
-    "worker_actions": null
-  },
-  {
-    "id": 854,
-    "label": "acc2014_37774756",
-    "role": "responder",
-    "business_id": 51,
-    "program_id": 102,
-    "program_code": "TGR10",
-    "runtime_state": "running",
-    "desired_state": "start",
-    "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
-    "last_seen_at": "2026-08-03T16:37:00.403959+00:00",
-    "business_binding_epoch": 1,
-    "outreach": {
-      "roles": [
-        "dm_sender"
-      ],
-      "enabled": true,
-      "allowed_actions": [
-        "command_dry_run",
-        "create_private_chat",
-        "gateway_capabilities",
-        "get_me",
-        "mark_messages_read",
-        "reply_private_dm",
-        "send_chat_action",
-        "send_private_dm",
-        "send_typing",
-        "sync_private_dm_replies",
-        "view_messages"
-      ],
-      "publish_inbound": true,
-      "outbound_attachments_enabled": true,
-      "allow_immediate_visible_actions": true
-    },
-    "worker_actions": null
-  },
-  {
-    "id": 855,
-    "label": "acc2015_112392498",
-    "role": "responder",
-    "business_id": 51,
-    "program_id": 100,
-    "program_code": "TGR8",
-    "runtime_state": "running",
-    "desired_state": "start",
-    "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
-    "last_seen_at": "2026-08-03T11:35:25.771145+00:00",
-    "business_binding_epoch": 1,
-    "outreach": {
-      "roles": [
-        "dm_sender"
-      ],
-      "enabled": true,
-      "allowed_actions": [
-        "command_dry_run",
-        "create_private_chat",
-        "gateway_capabilities",
-        "get_me",
-        "mark_messages_read",
-        "reply_private_dm",
-        "send_chat_action",
-        "send_private_dm",
-        "send_typing",
-        "sync_private_dm_replies",
-        "view_messages"
-      ],
-      "publish_inbound": true,
-      "outbound_attachments_enabled": true,
-      "allow_immediate_visible_actions": true
-    },
-    "worker_actions": null
-  },
-  {
-    "id": 858,
-    "label": "outreach_125268471",
-    "role": "responder",
-    "business_id": 51,
-    "program_id": 5,
-    "program_code": "TGR1",
-    "runtime_state": "running",
-    "desired_state": "start",
-    "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
-    "last_seen_at": "2026-08-03T12:14:33.639234+00:00",
     "business_binding_epoch": 1,
     "outreach": {
       "roles": [
@@ -4503,6 +4413,142 @@
     "worker_actions": null
   },
   {
+    "id": 854,
+    "label": "acc2014_37774756",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 102,
+    "program_code": "TGR10",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_seen_at": "2026-08-03T16:37:00.403959+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": null
+  },
+  {
+    "id": 855,
+    "label": "acc2015_112392498",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 100,
+    "program_code": "TGR8",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_seen_at": "2026-08-03T11:35:25.771145+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "refresh_dialogs": {
+          "enabled": false,
+          "tickets": 0,
+          "force_runs": 0,
+          "_completed_runs": 1,
+          "_force_request_seq": 1
+        }
+      }
+    }
+  },
+  {
+    "id": 858,
+    "label": "outreach_125268471",
+    "role": "responder",
+    "business_id": 51,
+    "program_id": 5,
+    "program_code": "TGR1",
+    "runtime_state": "running",
+    "desired_state": "start",
+    "is_active": true,
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_seen_at": "2026-08-03T12:14:33.639234+00:00",
+    "business_binding_epoch": 1,
+    "outreach": {
+      "roles": [
+        "channel_sender"
+      ],
+      "enabled": true,
+      "allowed_actions": [
+        "check_channel_dm_metadata",
+        "command_dry_run",
+        "gateway_capabilities",
+        "get_me",
+        "mark_messages_read",
+        "reply_private_dm",
+        "resolve_channel_dm",
+        "send_channel_dm",
+        "send_chat_action",
+        "send_typing",
+        "sync_channel_dm_replies",
+        "sync_private_dm_replies",
+        "view_messages"
+      ],
+      "publish_inbound": true,
+      "outbound_attachments_enabled": true,
+      "allow_immediate_visible_actions": true
+    },
+    "worker_actions": {
+      "events": {
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        }
+      }
+    }
+  },
+  {
     "id": 860,
     "label": "outreach_91276975",
     "role": "responder",
@@ -4512,7 +4558,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-08-03T12:43:32.883099+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4546,7 +4592,17 @@
       "outbound_attachments_enabled": true,
       "allow_immediate_visible_actions": true
     },
-    "worker_actions": null
+    "worker_actions": {
+      "events": {
+        "refresh_dialogs": {
+          "enabled": false,
+          "tickets": 0,
+          "force_runs": 0,
+          "_completed_runs": 1,
+          "_force_request_seq": 1
+        }
+      }
+    }
   },
   {
     "id": 861,
@@ -4558,7 +4614,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-03T12:47:04.340532+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4592,7 +4648,20 @@
       "outbound_attachments_enabled": true,
       "allow_immediate_visible_actions": true
     },
-    "worker_actions": null
+    "worker_actions": {
+      "events": {
+        "set_2fa": {
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": false,
+          "tickets": 0,
+          "force_runs": 0,
+          "_completed_runs": 1,
+          "_force_request_seq": 1
+        }
+      }
+    }
   },
   {
     "id": 862,
@@ -4604,7 +4673,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:23.225775+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
     "last_seen_at": "2026-08-03T12:52:23.874831+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4638,7 +4707,17 @@
       "outbound_attachments_enabled": true,
       "allow_immediate_visible_actions": true
     },
-    "worker_actions": null
+    "worker_actions": {
+      "events": {
+        "refresh_dialogs": {
+          "enabled": false,
+          "tickets": 0,
+          "force_runs": 0,
+          "_completed_runs": 1,
+          "_force_request_seq": 1
+        }
+      }
+    }
   },
   {
     "id": 863,
@@ -4650,7 +4729,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:16.723506+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
     "last_seen_at": "2026-08-03T13:00:35.638302+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4687,8 +4766,11 @@
     },
     "worker_actions": {
       "events": {
+        "reconcile": {
+          "_completed_runs": 1
+        },
         "refresh_dialogs": {
-          "enabled": true,
+          "enabled": false,
           "tickets": 0,
           "force_runs": 0,
           "_completed_runs": 1,
@@ -4707,7 +4789,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.559207+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
     "last_seen_at": "2026-08-03T13:02:14.543192+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4741,7 +4823,20 @@
       "outbound_attachments_enabled": true,
       "allow_immediate_visible_actions": true
     },
-    "worker_actions": null
+    "worker_actions": {
+      "events": {
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "refresh_dialogs": {
+          "enabled": false,
+          "tickets": 0,
+          "force_runs": 0,
+          "_completed_runs": 1,
+          "_force_request_seq": 1
+        }
+      }
+    }
   },
   {
     "id": 865,
@@ -4753,7 +4848,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:17.828536+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
     "last_seen_at": "2026-08-03T13:12:01.314445+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4792,7 +4887,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:57:25.883532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
     "last_seen_at": "2026-08-03T13:13:57.574115+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4831,7 +4926,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-04T08:56:57.754599+00:00",
+    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
     "last_seen_at": "2026-08-03T13:17:45.161162+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4858,6 +4953,15 @@
       "outbound_attachments_enabled": true,
       "allow_immediate_visible_actions": true
     },
-    "worker_actions": null
+    "worker_actions": {
+      "events": {
+        "reconcile": {
+          "_completed_runs": 1
+        },
+        "delete_old_photos": {
+          "_completed_runs": 1
+        }
+      }
+    }
   }
 ]
