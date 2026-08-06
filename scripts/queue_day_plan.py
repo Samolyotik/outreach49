@@ -69,9 +69,21 @@ def ensure_campaign(store: Store) -> str:
 
 
 def existing_task(store: Store, campaign_id: str, contact_id: str) -> dict | None:
+    """Есть ли у этого адресата задача в этой кампании — в любом состоянии.
+
+    ⚠️ Состояние здесь не фильтруется намеренно. Раньше отсюда исключались
+    `cancelled`, и проверка расходилась с базой: уникальность
+    `(кампания, контакт)` в `idx_tasks_campaign_contact` отменённые считает.
+    Достаточно было одной отменённой задачи, чтобы весь прогон упал на
+    `IntegrityError` посреди списка — и ровно так он и упал на плане 07.08,
+    споткнувшись об одну строку из трёхсот восьми.
+
+    Отменённую задачу мы не воскрешаем и вторую не заводим: адресат считается
+    занятым, и вернуть его в работу — отдельное осознанное действие человека.
+    """
     row = store.one(
         "SELECT id, state FROM tasks WHERE campaign_id = ? AND contact_id = ? "
-        "  AND state <> 'cancelled' LIMIT 1",
+        " ORDER BY CASE state WHEN 'cancelled' THEN 1 ELSE 0 END LIMIT 1",
         (campaign_id, contact_id),
     )
     return dict(row) if row else None

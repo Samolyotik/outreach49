@@ -67,12 +67,26 @@ EDGE_MARGIN_MIN = 40
 #: местами, и раскладка перестаёт читаться как расписание.
 JITTER_RATIO = 0.75
 
-#: Роль → чем она пишет и из какого пула берёт цели. Пул берётся из разведки:
-#: канал или чат попадает сюда, только если проверка прошла успешно и мы туда
-#: ещё не писали.
+#: Роль → чем она пишет, из какого пула берёт цели и что разведка должна была
+#: про эту цель ответить.
+#:
+#: Последнее условие появилось не сразу, и его отсутствие стоило дорого.
+#: «Зонд удался» и «писать можно» — разные вещи: проверка чата отвечает
+#: `succeeded` и для того, куда посторонним вход закрыт, просто с
+#: `decision=restricted`. Из 596 проверенных чатов таких оказалось 293 —
+#: ровно половина пула. По факту это видно в исходе отправок: из ста
+#: сообщений в чаты прошло 31, а 58 вернулись `member_cannot_send`.
+#: Неудачная попытка расходует дневную норму аккаунта наравне с удачной,
+#: поэтому половина плана уходила в никуда, ещё и занимая место.
 LANES = {
-    "channel_sender": ("send_channel_dm", "recon_channels", "channel"),
-    "chat_sender": ("send_public_chat_message", "recon_chats", "chat"),
+    "channel_sender": (
+        "send_channel_dm", "recon_channels", "channel",
+        "json_extract(t.result,'$.data.availability') = 'available'",
+    ),
+    "chat_sender": (
+        "send_public_chat_message", "recon_chats", "chat",
+        "json_extract(t.result,'$.data.structurally_writable') = 1",
+    ),
 }
 
 #: Личка отдельно: её цели — живые люди из лидов бизнеса 140, и приходят они
@@ -103,13 +117,19 @@ def ready_accounts(conn: sqlite3.Connection) -> list[dict]:
     return out
 
 
-def verified_targets(conn: sqlite3.Connection, campaign: str) -> list[dict]:
-    """Цели, которые разведка проверила и которым мы ещё не писали."""
+def verified_targets(conn: sqlite3.Connection, campaign: str,
+                     verdict: str = "1") -> list[dict]:
+    """Цели, куда действительно можно писать и куда мы ещё не писали.
+
+    ``verdict`` — условие на ответ разведки. Без него сюда попадали цели, чей
+    зонд просто отработал без ошибки, включая те, куда вход закрыт.
+    """
     rows = conn.execute(
         "SELECT c.id AS contact_id, c.username, c.display_name "
         "  FROM tasks t JOIN contacts c ON c.id = t.contact_id "
         "  LEFT JOIN contact_touches ct ON ct.contact_id = c.id "
         " WHERE t.campaign_id = ? AND t.outcome = 'succeeded' "
+        f"   AND ({verdict}) "
         "   AND ct.contact_id IS NULL AND COALESCE(c.opted_out,0) = 0 "
         "   AND c.username IS NOT NULL AND trim(c.username) <> '' "
         " GROUP BY c.id ORDER BY c.id",
@@ -193,7 +213,20 @@ def build(db: Path, *, date: str, per_account: int,
           from_hour: int, to_hour: int,
           dm_pool: list[dict] | None = None,
           jitter: float = JITTER_RATIO,
-          only_dm: bool = False) -> dict:
+          only_dm: bool = False,
+          quotas: dict[int, int] | None = None) -> dict:
+    """``quotas`` — своя норма для отдельных аккаунтов, остальным ``per_account``.
+
+    Норма нужна поимённо, потому что аккаунты в одной роли не равны. Тот, кто
+    сменил занятие вчера, и тот, кто год пишет в каналы, для Telegram выглядят
+    по-разному, и одинаковая норма на обоих — это либо перебор для первого,
+    либо недобор для второго.
+    """
+    quotas = {int(k): int(v) for k, v in (quotas or {}).items()}
+
+    def норма(account_id: int) -> int:
+        return quotas.get(int(account_id), per_account)
+
     conn = connect(db)
     try:
         accounts = ready_accounts(conn)
@@ -201,8 +234,8 @@ def build(db: Path, *, date: str, per_account: int,
         # уже поставленные задачи, и пересчёт дал бы им новые слоты: план на
         # день, который уже лежит в очереди, переехал бы целиком.
         pools = {lane: [] for lane in LANES} if only_dm else {
-            lane: verified_targets(conn, campaign)
-            for lane, (_, campaign, _) in LANES.items()
+            lane: verified_targets(conn, campaign, verdict)
+            for lane, (_, campaign, _, verdict) in LANES.items()
         }
         outstanding = [] if only_dm else debt(conn)
         loaded = outreach_load(conn, date)
@@ -225,14 +258,17 @@ def build(db: Path, *, date: str, per_account: int,
     # пул целиком, а остальные остались бы без работы.
     dm_pool = list(dm_pool or [])
     left_over = {lane: 0 for lane in LANES}
-    for lane, (action, _, kind) in LANES.items():
+    for lane, (action, _, kind, _verdict) in LANES.items():
         eligible = [a for a in accounts if lane in a["roles"]]
         pool = list(pools[lane])
         cursor = 0
-        for _ in range(per_account):
+        # Витков столько, сколько у самого щедрого: аккаунт со своей меньшей
+        # нормой просто перестанет брать раньше остальных.
+        витков = max((норма(a["id"]) for a in eligible), default=per_account)
+        for _ in range(витков):
             for account in eligible:
                 slots = by_account.setdefault(account["id"], [])
-                if len(slots) >= per_account or cursor >= len(pool):
+                if len(slots) >= норма(account["id"]) or cursor >= len(pool):
                     continue
                 target = pool[cursor]
                 cursor += 1
@@ -263,16 +299,17 @@ def build(db: Path, *, date: str, per_account: int,
         # аккаунта к чатам и ответам добавился бы третий вид активности за
         # день, а выигрыша никакого. Не хватает — подключаем и остальных.
         free = [a for a in eligible if not loaded.get(a["id"])]
-        if len(free) * per_account >= len(dm_pool):
+        if sum(норма(a["id"]) for a in free) >= len(dm_pool):
             eligible = free
         cursor = 0
         skipped_without_text = 0
-        for _ in range(per_account):
+        витков = max((норма(a["id"]) for a in eligible), default=per_account)
+        for _ in range(витков):
             for account in eligible:
                 slots = by_account.setdefault(account["id"], [])
                 # Потолок считается вместе с тем, что уже стоит на этот день:
                 # аккаунт с пятью сообщениями в чаты личку сегодня не берёт.
-                room = per_account - loaded.get(account["id"], 0)
+                room = норма(account["id"]) - loaded.get(account["id"], 0)
                 if len(slots) >= room or cursor >= len(dm_pool):
                     continue
                 target = dm_pool[cursor]
@@ -356,13 +393,22 @@ def build(db: Path, *, date: str, per_account: int,
 
     out.sort(key=lambda r: r["слот"])
     return {"дата": date, "окно": f"{from_hour:02d}:00–{to_hour:02d}:00 МСК",
-            "потолок на аккаунт": per_account, "всего": total,
-            "остаток": left_over, "отправки": out}
+            "потолок на аккаунт": per_account,
+            "своя норма": {str(k): v for k, v in sorted(quotas.items())},
+            "всего": total, "остаток": left_over, "отправки": out}
 
 
 def summarize(plan: dict) -> None:
     print(f"План на {plan['дата']}, окно {plan.get('окно','—')}, "
           f"потолок {plan.get('потолок на аккаунт')} на аккаунт")
+    своя = plan.get("своя норма") or {}
+    if своя:
+        by_count: dict[int, list[str]] = {}
+        for account_id, count in своя.items():
+            by_count.setdefault(int(count), []).append(str(account_id))
+        for count in sorted(by_count):
+            print(f"  своя норма {count}: {len(by_count[count])} аккаунтов "
+                  f"({', '.join(by_count[count])})")
     print(f"всего сообщений: {plan['всего']}\n")
 
     kinds: dict[str, int] = {}
@@ -400,6 +446,10 @@ def main() -> int:
     parser.add_argument("--db", default="var/bridge49.sqlite")
     parser.add_argument("--date", required=True)
     parser.add_argument("--per-account", type=int, default=5)
+    parser.add_argument(
+        "--per-account-for", action="append", default=[], metavar="ID,ID=N",
+        help="своя норма для перечисленных аккаунтов: --per-account-for "
+             "804,812,816=5 (можно повторять)")
     parser.add_argument("--from-hour", type=int, default=10)
     parser.add_argument("--to-hour", type=int, default=21)
     parser.add_argument("--dm-candidates",
@@ -417,9 +467,20 @@ def main() -> int:
             Path(args.dm_candidates).read_text(encoding="utf-8"))
         dm_pool = payload.get("кандидаты") or []
 
+    quotas: dict[int, int] = {}
+    for rule in args.per_account_for:
+        ids, _, count = str(rule).rpartition("=")
+        if not ids or not count.strip().isdigit():
+            parser.error(f"не разобрал норму {rule!r}, нужно ID,ID=N")
+        for raw in ids.replace(" ", "").split(","):
+            if not raw.isdigit():
+                parser.error(f"не номер аккаунта: {raw!r}")
+            quotas[int(raw)] = int(count)
+
     plan = build(Path(args.db), date=args.date, per_account=args.per_account,
                  from_hour=args.from_hour, to_hour=args.to_hour,
-                 dm_pool=dm_pool, jitter=args.jitter, only_dm=args.only_dm)
+                 dm_pool=dm_pool, jitter=args.jitter, only_dm=args.only_dm,
+                 quotas=quotas)
     summarize(plan)
     if args.out:
         Path(args.out).write_text(

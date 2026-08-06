@@ -107,6 +107,28 @@ class QueueDayPlanTests(unittest.TestCase):
         self.assertEqual(len(again["поставлено"]), 0)
         self.assertEqual(len(again["пропущено"]), 1)
 
+    def test_a_cancelled_task_blocks_the_contact_without_crashing(self):
+        """Отменённая задача не даёт поставить вторую — и не роняет прогон.
+
+        Уникальность `(кампания, контакт)` в базе отменённые считает. Пока
+        проверка их исключала, она расходилась с индексом: строка проходила
+        отбор и падала на вставке `IntegrityError`, унося весь прогон. На
+        плане 07.08 так и вышло — одна отменённая задача из трёхсот восьми
+        строк не дала поставить ни одной.
+        """
+        queue_day_plan.load(self.plan(), self.store, apply=True)
+        self.store.execute(
+            "UPDATE tasks SET state = 'cancelled' WHERE campaign_id = ?",
+            (queue_day_plan.CAMPAIGN_ID,))
+        self.store.commit()
+
+        again = queue_day_plan.load(self.plan(), self.store, apply=True)
+
+        self.assertEqual(len(again["поставлено"]), 0)
+        self.assertEqual(len(again["пропущено"]), 1)
+        self.assertEqual(again["пропущено"][0]["состояние"], "cancelled")
+        self.assertEqual(self.queued_count(), 1, "вторая задача не заводится")
+
     # -- долг ---------------------------------------------------------------
 
     def test_debt_is_moved_not_duplicated(self):

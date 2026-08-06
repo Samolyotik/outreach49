@@ -197,6 +197,34 @@ class PlanDmTests(unittest.TestCase):
                             for gap in gaps), gaps)
         self.assertGreater(len(set(gaps)), 1, "равные интервалы — это сетка")
 
+    def test_own_quota_lowers_only_the_named_account(self):
+        """Аккаунт со своей нормой берёт меньше, остальные — как обычно.
+
+        Норма нужна поимённо: аккаунт, сменивший занятие вчера, и аккаунт,
+        который год пишет в каналы, для Telegram выглядят по-разному.
+        """
+        plan = self.build(self.candidates(10), quotas={804: 2})
+        сколько: dict[int, int] = {}
+        for row in plan["отправки"]:
+            сколько[row["аккаунт"]] = сколько.get(row["аккаунт"], 0) + 1
+        # 862 занят чатами и личку не берёт, поэтому весь план — на 804.
+        self.assertEqual(сколько, {804: 2})
+        self.assertEqual(plan["своя норма"], {"804": 2})
+
+    def test_own_quota_counts_the_debt_already_queued(self):
+        """Долг занимает место в норме, а не добавляется сверх неё.
+
+        У 804 уже лежит один догон. При норме 2 он должен получить лишь одно
+        новое касание, иначе день выйдет на три сообщения вместо двух.
+        """
+        plan = plan_tomorrow.build(
+            self.path, date=DATE, per_account=5, from_hour=10, to_hour=21,
+            dm_pool=self.candidates(10), quotas={804: 2})
+        свои = [r for r in plan["отправки"] if r["аккаунт"] == 804]
+        долг = [r for r in свои if r["вид"] == "долг"]
+        self.assertEqual(len(долг), 1)
+        self.assertEqual(len(свои), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
