@@ -41,8 +41,13 @@ async def poll_results(
     bridge: RadarBridge | None = None,
 ) -> dict:
     """Подтянуть статусы всех задач, которые ждут ответа моста."""
+    # `outcome_unknown` переспрашивается бессрочно намеренно: Radar умеет позже
+    # заменить его настоящим исходом, и задача обязана это подхватить. Плата —
+    # такая задача остаётся в опросе навсегда, поэтому всё, что делается ниже по
+    # её поводу, обязано быть идемпотентным (см. `already_classified`).
     rows = store.query(
-        "SELECT id, command_id, account_id FROM tasks "
+        "SELECT id, command_id, account_id, state, error_code, error_message "
+        "FROM tasks "
         "WHERE command_id IS NOT NULL AND ("
         "state = 'queued' OR "
         "(state = 'failed' AND outcome = 'outcome_unknown') OR "
@@ -55,6 +60,12 @@ async def poll_results(
 
     by_command = {int(row["command_id"]): row["id"] for row in rows}
     account_of = {row["id"]: row["account_id"] for row in rows}
+    # Ждущая задача исхода ещё не получала, поэтому разобрана быть не могла:
+    # для неё сравнивать не с чем и разбор нужен всегда.
+    known_error = {
+        row["id"]: (row["error_code"] or "", row["error_message"] or "")
+        for row in rows if row["state"] != "queued"
+    }
     async with _bridge(settings, bridge) as link:
         results = await link.results(sorted(by_command))
 
@@ -91,6 +102,12 @@ async def poll_results(
             running += 1
             continue
         error = result.get("error") or {}
+        code_now = (error.get("code") if isinstance(error, dict) else None) or ""
+        message_now = (
+            str(error.get("message"))[:500]
+            if isinstance(error, dict) and error.get("message")
+            else record.get("last_error")
+        )
         state = {
             "done": "done" if outcome == "succeeded" else "failed",
             "skipped": "skipped",
@@ -103,9 +120,8 @@ async def poll_results(
             (
                 state,
                 outcome or None,
-                (error.get("code") if isinstance(error, dict) else None),
-                (str(error.get("message"))[:500] if isinstance(error, dict)
-                 and error.get("message") else record.get("last_error")),
+                code_now or None,
+                message_now,
                 dumps(result)[:100_000],
                 record.get("updated_at") or now(),
                 now(),
@@ -113,7 +129,15 @@ async def poll_results(
             ),
         )
         _touch_thread_outbound(store, task_id, result)
-        if state in ("failed", "skipped") and isinstance(error, dict):
+        # Разбирать неудачу заново на каждом опросе незачем: ответ Radar тот же,
+        # а запись — новая. Одна задача так дала 1952 одинаковых события за ночь.
+        # Признак «уже разобрано» берём из самой задачи: до первого разбора её
+        # поля ошибки пусты, после — совпадают с тем, что приехало сейчас.
+        already_classified = task_id in known_error and known_error[task_id] == (
+            code_now, message_now or ""
+        )
+        if (state in ("failed", "skipped") and isinstance(error, dict)
+                and not already_classified):
             # Разбор неудачи идёт здесь, а не в диспетчере: сюда приезжает
             # исход от Radar, и только здесь известно, чем именно кончилось.
             errors.record(
