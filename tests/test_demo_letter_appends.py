@@ -213,6 +213,30 @@ class СсылкаБезСогласия(ПисьмоДописывается):
             actor="test", branch_config=self.branch)
         self.assertEqual(итог["demo"], "")
 
+    def test_неуверенное_сопоставление_демо_не_даёт(self):
+        """`likely` и `ambiguous` не отличают чужую сферу от готовой.
+
+        Id при них пустой, и `record_demo_invite` уже не может отбить готовую
+        группу — он опознаёт её только по названному id. Человек с логистикой
+        из Китая получил бы общий демо-бот вместо своей тестовой группы.
+        """
+        for уверенность in ("likely", "ambiguous", "exact", ""):
+            with self.subTest(уверенность=уверенность):
+                итог = autoreply.apply(
+                    self.store, self.inbound,
+                    self.вопрос(sector_confidence=уверенность),
+                    actor="test", branch_config=self.branch)
+                self.assertEqual(итог["demo"], "")
+
+    def test_письмо_не_делает_вид_что_человек_согласился(self):
+        """Оно дописывается и к ходу, где движок сам задал вопрос."""
+        autoreply.apply(self.store, self.inbound, self.вопрос(),
+                        actor="test", branch_config=self.branch)
+        письмо = self.письма()[0]
+        for слово in ("Отлично", "Хорошо, тогда", "тогда предлагаю"):
+            self.assertNotIn(слово, письмо,
+                             "начало письма предполагает несказанное согласие")
+
 
 class ЛичкаКанальногоОтправителя(ПисьмоДописывается):
     """Боевая форма разговора: пишет канал, отвечают в обычную личку.

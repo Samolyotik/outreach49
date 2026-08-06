@@ -495,6 +495,14 @@ def demo_route_applies(
     выбранная = str(decision.get("matched_direct_invite_sector_id") or "").strip()
     if выбранная:
         return False
+    # И только уверенное «в словаре такого нет». `record_demo_invite` умеет
+    # отбить готовую сферу, но лишь когда её id назван, а id ставится только
+    # при `exact`. При `likely` и `ambiguous` id пустой, и человек с логистикой
+    # из Китая — сферой, у которой готовая группа ЕСТЬ, — получил бы общий
+    # демо-бот вместо своей тестовой группы. Пустое значение тоже не годится:
+    # оно означает «не бралась сопоставлять», а не «не нашла».
+    if str(decision.get("sector_confidence") or "").strip().lower() != "none":
+        return False
     branch = branch_config or direct_invite.BranchConfig.from_env()
     return branch.demo_route_ready()
 
