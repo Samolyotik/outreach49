@@ -9,7 +9,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-03T12:48:56.370178+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -73,7 +73,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:21:50.677262+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -160,7 +160,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-30T17:59:25.671545+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -247,7 +247,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-07-28T17:25:04.754115+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -340,7 +340,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:22:50.944554+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -435,7 +435,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-07-28T17:29:23.902592+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -518,7 +518,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-26T22:59:21.311543+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -606,7 +606,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-27T22:40:17.575963+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -698,7 +698,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-27T22:40:15.140984+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -780,7 +780,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-28T10:06:08.648096+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -862,7 +862,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-28T14:49:50.789098+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -949,7 +949,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-06T11:42:17.744275+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1041,7 +1041,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-30T21:12:54.822842+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1129,7 +1129,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-08-02T22:07:49.150451+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1212,7 +1212,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:23:51.468582+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1304,7 +1304,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:24:51.707094+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1401,7 +1401,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-26T23:32:18.159031+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1488,7 +1488,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:57:32.140903+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1575,7 +1575,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-26T23:09:08.160765+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1662,7 +1662,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-27T02:15:55.485013+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1754,7 +1754,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-28T10:32:02.618205+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1841,7 +1841,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-28T10:40:27.501870+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -1923,7 +1923,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-28T10:54:42.612401+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2010,7 +2010,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-28T10:09:37.861881+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2102,7 +2102,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-27T02:51:04.458549+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2189,7 +2189,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:25:50.490327+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2276,7 +2276,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:26:51.137002+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2368,7 +2368,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-26T23:46:37.038551+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2460,7 +2460,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-04T09:33:33.355002+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2547,7 +2547,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-27T00:09:49.686363+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2629,7 +2629,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-27T10:41:27.449204+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2717,7 +2717,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-08-02T22:08:37.500823+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2809,7 +2809,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-27T02:43:09.996678+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2897,7 +2897,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-28T02:34:43.196799+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -2979,7 +2979,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-26T23:52:16.870927+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3066,7 +3066,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-28T10:40:15.848049+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3158,7 +3158,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-27T02:08:32.910970+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3245,7 +3245,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-02T16:27:51.957671+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3332,7 +3332,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-07-28T17:21:23.012550+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3420,7 +3420,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-30T14:52:48.793845+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3512,7 +3512,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-26T22:44:11.751413+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3600,7 +3600,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-08-02T22:08:18.709273+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3683,7 +3683,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-27T01:11:15.766772+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3770,7 +3770,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-07-26T22:47:12.622601+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3862,7 +3862,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-27T03:11:30.739984+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -3949,7 +3949,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-07-27T11:15:35.468409+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4032,7 +4032,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-07-28T17:40:42.378317+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4120,7 +4120,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-07-28T17:45:41.117368+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4212,7 +4212,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-07-27T02:29:06.911534+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4300,7 +4300,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-07-28T20:17:41.402257+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4383,7 +4383,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-03T11:32:12.693415+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4422,7 +4422,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-08-03T16:37:00.403959+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4461,7 +4461,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-03T11:35:25.771145+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4510,7 +4510,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-08-03T12:14:33.639234+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4558,7 +4558,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-03T12:43:32.883099+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4581,7 +4581,6 @@
         "reply_private_dm",
         "search_public_chat",
         "send_chat_action",
-        "send_private_dm",
         "send_public_chat_message",
         "send_typing",
         "sync_private_dm_replies",
@@ -4614,7 +4613,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-03T12:47:04.340532+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4637,7 +4636,6 @@
         "reply_private_dm",
         "search_public_chat",
         "send_chat_action",
-        "send_private_dm",
         "send_public_chat_message",
         "send_typing",
         "sync_private_dm_replies",
@@ -4673,7 +4671,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:18.323815+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:20.460117+00:00",
     "last_seen_at": "2026-08-03T12:52:23.874831+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4696,7 +4694,6 @@
         "reply_private_dm",
         "search_public_chat",
         "send_chat_action",
-        "send_private_dm",
         "send_public_chat_message",
         "send_typing",
         "sync_private_dm_replies",
@@ -4729,7 +4726,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:54.879300+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:14.330267+00:00",
     "last_seen_at": "2026-08-03T13:00:35.638302+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4753,7 +4750,6 @@
         "reply_private_dm",
         "search_public_chat",
         "send_chat_action",
-        "send_private_dm",
         "send_public_chat_message",
         "send_typing",
         "sync_private_dm_replies",
@@ -4789,7 +4785,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:20.224939+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:21.839845+00:00",
     "last_seen_at": "2026-08-03T13:02:14.543192+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4812,7 +4808,6 @@
         "reply_private_dm",
         "search_public_chat",
         "send_chat_action",
-        "send_private_dm",
         "send_public_chat_message",
         "send_typing",
         "sync_private_dm_replies",
@@ -4848,7 +4843,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:02.540532+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:12.782615+00:00",
     "last_seen_at": "2026-08-03T13:12:01.314445+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4887,7 +4882,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:25:09.994542+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:09.143560+00:00",
     "last_seen_at": "2026-08-03T13:13:57.574115+00:00",
     "business_binding_epoch": 1,
     "outreach": {
@@ -4926,7 +4921,7 @@
     "runtime_state": "running",
     "desired_state": "start",
     "is_active": true,
-    "last_heartbeat_at": "2026-08-06T18:24:57.033535+00:00",
+    "last_heartbeat_at": "2026-08-06T18:35:05.459717+00:00",
     "last_seen_at": "2026-08-03T13:17:45.161162+00:00",
     "business_binding_epoch": 1,
     "outreach": {
