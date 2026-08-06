@@ -532,8 +532,17 @@ def review_mark(decision: dict) -> str:
         marks.append("предупреждения: " + ", ".join(str(w) for w in warnings))
     if str(decision.get("risk_level") or "") == "high":
         marks.append("рискованная тема")
-    if decision.get("handoff_kind") not in (None, "", "none"):
-        marks.append(f"обещание менеджера: {decision['handoff_kind']}")
+    kind = str(decision.get("handoff_kind") or "")
+    if kind == direct_invite.MANAGER_HANDOFF_KIND:
+        marks.append("обещание менеджера")
+    elif kind == direct_invite.CONSENT_HANDOFF_KIND:
+        # Согласие на тест раньше помечалось «обещанием менеджера» — теперь
+        # это неправда: его закрывает автоматика. Пометку не убираем совсем,
+        # но называем честно: перечитать такой ответ стоит, потому что в нём
+        # выдаётся доступ.
+        marks.append("выдача доступа")
+    elif kind not in ("", "none"):
+        marks.append(f"неизвестный вид handoff: {kind}")
     return "; ".join(marks)
 
 

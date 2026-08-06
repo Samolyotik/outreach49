@@ -722,6 +722,23 @@ class HandoffVocabularyTests(unittest.TestCase):
         self.assertLessEqual(autoreply.UNCLEAR_DECISIONS,
                              autoreply.HANDOFF_DECISIONS)
 
+    def test_a_test_consent_is_not_marked_as_a_promise_of_a_manager(self):
+        """Пометка едет в `autoreply review`, и врать в ней нельзя.
+
+        Согласие на тест закрывает автоматика — назвать это «обещанием
+        менеджера» значит каждый день выкладывать оператору список ответов,
+        которых он ждёт от менеджера напрасно.
+        """
+        mark = autoreply.review_mark(verdict(
+            "reply_and_handoff", handoff_kind="free_test_access"))
+        self.assertNotIn("менеджер", mark)
+        self.assertIn("выдача доступа", mark)
+
+    def test_a_real_promise_of_a_manager_is_still_marked(self):
+        mark = autoreply.review_mark(verdict(
+            "reply_and_handoff", handoff_kind="manager_action"))
+        self.assertIn("обещание менеджера", mark)
+
 
 class ManagerCardPolicyTests(unittest.TestCase):
     """Кого именно ждёт живой человек.
