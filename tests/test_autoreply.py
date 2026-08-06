@@ -1019,22 +1019,38 @@ class ConsentChannelTests(unittest.TestCase):
         seen = {self.role_for(862, "private_dm") for _ in range(50)}
         self.assertEqual(seen, {"dm_sender"})
 
-    def test_an_account_without_the_matching_role_yields_nothing(self):
-        """Приписать согласию канал, которого не было, хуже, чем не выдать
-        доступ автоматически: `record_consent` тогда откажет и позовёт
-        менеджера."""
+    def test_a_channel_sender_answered_in_dm_still_gets_a_channel(self):
+        """Раньше здесь требовалось пустое: канал роли не совпадал с личкой.
+
+        Требование стоило выдачи почти целиком. `channel_sender` пишет первым
+        в личку канала, а отвечают ему в обычную личку — политика это прямо
+        разрешает. За 01–06.08 так осталось без единой ссылки 80 человек из
+        104, и ни одного демо-письма не собралось вовсе.
+
+        Канал теперь берётся из поверхности разговора, а не выводится из роли,
+        поэтому в учёт уезжает `private_dm` — то, чем разговор и был. Значение
+        там законное: три выдачи из десяти прошли именно с ним.
+        """
         from bridge49 import direct_invite
         role = self.role_for(814, "private_dm")
-        self.assertEqual(role, "")
-        self.assertEqual(direct_invite.source_channel_for_role(role), "")
+        self.assertEqual(role, "channel_sender")
+        self.assertEqual(
+            direct_invite.reply_channel(role, "private_dm"), "private_dm")
+
+    def test_a_role_that_may_not_answer_here_still_yields_nothing(self):
+        """Расширение не отменяет запрета: `dm_sender` публично не отвечает."""
+        from bridge49 import direct_invite
+        self.assertEqual(direct_invite.reply_channel("dm_sender", "public_chat"), "")
+        self.assertEqual(direct_invite.reply_channel("source_reader", "private_dm"), "")
 
     def test_the_channel_matches_the_surface_for_every_role(self):
         from bridge49 import direct_invite
-        for account_id, surface in ((862, "private_dm"), (814, "channel_dm")):
-            with self.subTest(surface=surface):
+        for account_id, surface in ((862, "private_dm"), (814, "channel_dm"),
+                                    (814, "private_dm")):
+            with self.subTest(account=account_id, surface=surface):
                 role = self.role_for(account_id, surface)
                 self.assertEqual(
-                    direct_invite.source_channel_for_role(role), surface)
+                    direct_invite.reply_channel(role, surface), surface)
 
 
 class OneLetterTests(unittest.TestCase):

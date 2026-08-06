@@ -129,6 +129,44 @@ ROLE_TO_CHANNEL = {
     "chat_sender": "public_chat",
 }
 
+#: Поверхности, на которых роли разрешено отвечать. Это не то же самое, что
+#: `ROLE_TO_CHANNEL`: там у роли ровно один канал — тот, с которого она пишет
+#: первой. Отвечают же роли шире, и правило взято из политики дословно:
+#: `channel_sender` отвечает в личке канала или в личке, которую человек начал
+#: сам; `chat_sender` отвечает ТОЛЬКО в такой личке и никогда публично.
+#:
+#: Разница стоила выдачи целиком. Канал согласия выводился из роли, и у
+#: `channel_sender`, которому ответили в личку, он не совпадал с поверхностью
+#: разговора — выдача молча отказывала. У `chat_sender` не совпадал никогда:
+#: единственная его законная поверхность ответа — личка, а канал по таблице —
+#: `public_chat`. За 01–06.08 так осталось без единой ссылки 80 человек из 104,
+#: а демо-писем не выдано вообще ни одного.
+ROLE_SURFACES = {
+    "channel_sender": ("channel_dm", "private_dm"),
+    "dm_sender": ("private_dm",),
+    "chat_sender": ("private_dm", "public_chat"),
+}
+
+
+def reply_channel(role: str, surface: str) -> str:
+    """Канал этого разговора. Пустая строка — роли тут отвечать нельзя.
+
+    Канал берётся из поверхности входящего, а не выводится из роли: где идёт
+    разговор — наблюдаемый факт, и придумывать его по роли аккаунта незачем.
+    Роль отвечает на другой вопрос — вправе ли она тут говорить.
+
+    Метка уезжает в учёт StartBot, поэтому она обязана быть правдой. Значение
+    `private_dm` там уже встречается: три выдачи из десяти прошли именно с ним.
+    """
+    role = str(role or "")
+    surface = str(surface or "").strip()
+    if not surface:
+        # Поверхности нет — остаётся канал самой роли. В бою она есть всегда,
+        # это колонка `inbound.surface`; пустой приходит только там, где
+        # входящее собрано руками.
+        return ROLE_TO_CHANNEL.get(role, "")
+    return surface if surface in ROLE_SURFACES.get(role, ()) else ""
+
 #: Пауза перед повторной попыткой после сетевого отказа. Растёт линейно: сервис
 #: за туннелем, и частые повторы при обрыве туннеля ничего не чинят.
 RETRY_BACKOFF_MINUTES = 15
@@ -907,6 +945,7 @@ def consent_left_unserved(
     store: Store,
     thread: Mapping[str, Any],
     account_role: str,
+    surface: str = "",
 ) -> str:
     """Почему согласие осталось без выдачи. Пусто — выдавать было и не нужно.
 
@@ -939,10 +978,14 @@ def consent_left_unserved(
         return "автовыдача выключена мастер-флагом"
     if not config.demo_route_ready():
         return "демо-маршрут недоступен: нет словаря сфер или ссылки на бота"
-    if source_channel_for_role(account_role) not in (
-        "channel_dm", "private_dm", "public_chat"
-    ):
-        return f"у роли {account_role or '—'} нет канала для выдачи"
+    # Поверхность знает только вызывающий, у которого есть входящее. Без неё
+    # остаётся спросить роль — приблизительно, зато честно: это диагностика,
+    # и её дело назвать причину, а не выдавать доступ.
+    канал = (reply_channel(account_role, surface) if surface
+             else source_channel_for_role(account_role))
+    if канал not in ("channel_dm", "private_dm", "public_chat"):
+        return (f"роль {account_role or '—'} не отвечает на поверхности "
+                f"{surface or '—'}")
     return "согласие есть, а выдать не удалось"
 
 
@@ -1067,7 +1110,7 @@ def record_consent(
                   str(inbound.get("id") or ""), contradiction)
         return None
 
-    channel = source_channel_for_role(account_role)
+    channel = reply_channel(account_role, inbound.get("surface"))
     if channel not in ("channel_dm", "private_dm", "public_chat"):
         return None
 
@@ -1145,7 +1188,7 @@ def record_demo_invite(
     if not config.demo_route_ready():
         return None
 
-    channel = source_channel_for_role(account_role)
+    channel = reply_channel(account_role, inbound.get("surface"))
     if channel not in ("channel_dm", "private_dm", "public_chat"):
         return None
 

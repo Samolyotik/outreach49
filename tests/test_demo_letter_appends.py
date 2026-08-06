@@ -214,6 +214,47 @@ class СсылкаБезСогласия(ПисьмоДописывается):
         self.assertEqual(итог["demo"], "")
 
 
+class ЛичкаКанальногоОтправителя(ПисьмоДописывается):
+    """Боевая форма разговора: пишет канал, отвечают в обычную личку.
+
+    Именно на ней всё и стояло. Канал выводился из роли: у `channel_sender` он
+    `channel_dm`, а поверхность входящего — `private_dm`, совпадения нет, и
+    `record_demo_invite` отказывал на первой же проверке. Молча: снаружи отказ
+    неотличим от «сфера не подошла».
+
+    За 01–06.08 так остались без единой ссылки 80 человек из 104, а демо-писем
+    не выдано ни одного за всё время.
+    """
+
+    SNAPSHOT = [{
+        "id": 821, "label": "канальный", "program_code": "TGR1",
+        "runtime_state": "running",
+        "outreach": {
+            "enabled": True, "roles": ["channel_sender"],
+            "publish_inbound": True, "allow_immediate_visible_actions": True,
+            "allowed_actions": ["send_channel_dm", "reply_private_dm"],
+        },
+    }]
+
+    def setUp(self):
+        super().setUp()
+        accounts_mod.sync(self.store, self.SNAPSHOT)
+        self.store.commit()
+
+    def test_ссылка_уходит_и_в_личку(self):
+        итог = autoreply.apply(self.store, self.inbound, self.согласие(),
+                               actor="test", branch_config=self.branch)
+        self.assertTrue(итог["demo"], "ссылка обязана уйти и в обычную личку")
+        self.assertIn("t.me/tg_radar_robot", self.письма()[0])
+
+    def test_канал_записан_настоящий(self):
+        """В учёт уезжает поверхность разговора, а не канал роли."""
+        autoreply.apply(self.store, self.inbound, self.согласие(),
+                        actor="test", branch_config=self.branch)
+        строка = self.store.one("SELECT source_channel FROM demo_invites")
+        self.assertEqual(строка["source_channel"], "private_dm")
+
+
 class ПунктХодаПодДемо(unittest.TestCase):
     """Демо-ссылке не нужен пункт `action_required`, а настоящей выдаче нужен.
 
