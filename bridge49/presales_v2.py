@@ -530,7 +530,13 @@ def build_presales_v2_prompt(
             "Для каждого handoff обязательно верни структурированный handoff_kind. "
             "Используй free_test_access только когда по смыслу текущего хода и "
             "прямой истории человек просит, принимает или хочет фактически запустить "
-            "бесплатный тест, демо системы либо получить доступ к нему. Для просьбы "
+            "бесплатный тест, демо системы либо получить доступ к нему. Исключение "
+            "одно: сфера самого человека подтверждена и её нет в "
+            "automatic_free_test_sector_catalog. Там free_test_access означает не "
+            "выдачу теста, а ссылку на общий демо-бот, и её не просят — как не "
+            "просят ссылку на сайт. Верни free_test_access с пустым "
+            "matched_direct_invite_sector_id, даже если человек ни о чём не "
+            "просил: ссылка бессрочная, общая и уходит один раз. Для просьбы "
             "о менеджере, созвоне, договоре, счёте, оплате, индивидуальной настройке "
             "или другого действия человека используй manager_action. Во всех "
             "действиях без handoff используй none. Не определяй handoff_kind поиском "
@@ -1172,8 +1178,17 @@ def normalize_presales_v2_result(
         return technical_failure_result("presales_v2_handoff_kind_required")
     if not handoff_required and handoff_kind != "none":
         return technical_failure_result("presales_v2_unexpected_handoff_kind")
-    if handoff_kind == "free_test_access" and not any(
-        item["status"] == "action_required" for item in turn_items
+    # Пункт `action_required` требуется там, где что-то действительно выдаётся:
+    # он не даёт пометить запуск теста как `answered`, пока доступа ещё нет.
+    #
+    # У демо-маршрута (пустой `matched_direct_invite_sector_id`) выдавать
+    # нечего: ссылка на демо-бота общая, бессрочная и просто дописывается к
+    # ответу. Требовать под неё отдельный пункт хода значит требовать, чтобы
+    # человек о ней попросил, — а он и не должен, ровно в этом и смысл ветки.
+    if (
+        handoff_kind == "free_test_access"
+        and matched_direct_invite_sector_id
+        and not any(item["status"] == "action_required" for item in turn_items)
     ):
         return technical_failure_result(
             "presales_v2_free_test_without_action_item"

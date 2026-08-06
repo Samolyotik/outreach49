@@ -166,5 +166,67 @@ class ПисьмоДописывается(unittest.TestCase):
         self.assertEqual(self.письма(), [])
 
 
+class ПунктХодаПодДемо(unittest.TestCase):
+    """Демо-ссылке не нужен пункт `action_required`, а настоящей выдаче нужен.
+
+    Пункт со статусом `action_required` держит одно: нельзя пометить запуск
+    теста как `answered`, пока доступа ещё нет. У демо-маршрута выдавать
+    нечего — ссылка общая и бессрочная, — а требование пункта означало бы,
+    что человек обязан о ней попросить. Просить он не должен, в этом вся суть.
+    """
+
+    from bridge49 import presales_v2 as _pv2
+    from bridge49.truth_pack import load_customer_truth_pack as _pack
+
+    PACK = _pack()
+    ХОД = "Занимаемся химчисткой диванов. Сколько стоит?"
+
+    def ответ(self, **overrides):
+        raw = {name: {"confidence": 0.9, "coverage_complete": True,
+                      "collected_fields_update": {"sector": "химчистка диванов"},
+                      "turn_items": []}.get(name, "")
+               for name in self._pv2.PRESALES_V2_REQUIRED_FIELDS}
+        raw.update({
+            "action": "reply_and_handoff",
+            # Не факт-интент: `pricing_question` со статусом `answered`
+            # требует ещё и source_id, а проверяется здесь не это.
+            "intent": "neutral",
+            "reply_text": "Стоимость от 29 000 ₽ в месяц. Показать, как ищет?",
+            "risk_level": "low",
+            "next_state": "FAQ automation",
+            "handoff_kind": "free_test_access",
+            "handoff_reason": "демо-бот",
+            "client_sector_text": "химчисткой диванов",
+            "turn_items": [{
+                "item_id": "q1", "topic": "general", "user_item": "цена",
+                "user_evidence": "Сколько стоит?", "status": "answered",
+                "answer_summary": "назвал цену",
+                "reply_evidence": "Стоимость от 29 000 ₽ в месяц.",
+                "source_ids": [],
+            }],
+        })
+        raw.update(overrides)
+        return raw
+
+    def разобрать(self, raw):
+        return self._pv2.normalize_presales_v2_result(
+            raw, pack=self.PACK, required_topics=("general",),
+            inbound_text=self.ХОД,
+            allowed_direct_invite_sector_ids=["auto_import_dealers"],
+        )
+
+    def test_демо_проходит_без_отдельного_пункта(self):
+        итог = self.разобрать(self.ответ())
+        self.assertFalse(итог.technical_failure, итог.reason)
+        self.assertEqual(итог.decision, "reply_and_handoff")
+        self.assertEqual(итог.matched_direct_invite_sector_id, "")
+
+    def test_настоящая_выдача_пункт_по_прежнему_требует(self):
+        итог = self.разобрать(self.ответ(
+            matched_direct_invite_sector_id="auto_import_dealers"))
+        self.assertTrue(итог.technical_failure)
+        self.assertEqual(итог.reason, "presales_v2_free_test_without_action_item")
+
+
 if __name__ == "__main__":
     unittest.main()
