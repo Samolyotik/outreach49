@@ -104,12 +104,23 @@ PRESALES_V2_REQUIRED_FIELDS = {
     "handoff_reason",
     "handoff_kind",
     "matched_direct_invite_sector_id",
+    # Сопоставление сферы. Три поля обязательны, как и все остальные: схема
+    # ответа не знает необязательных свойств, там каждое стоит в `required`.
+    # «Не знаю» выражается пустой строкой, а не отсутствием поля.
+    "client_sector_text",
+    "canonical_sector_id",
+    "sector_confidence",
     "knowledge_gap",
     "collected_fields_update",
     "coverage_complete",
     "turn_items",
     "reason",
 }
+
+#: Насколько уверенно свободная формулировка человека легла на словарь сфер.
+#: Пустая строка — модель не бралась сопоставлять. `ambiguous` отличается от
+#: `none` тем, что кандидаты есть, но выбрать между ними нельзя.
+PRESALES_V2_SECTOR_CONFIDENCE = {"exact", "likely", "ambiguous", "none", ""}
 PRESALES_V2_TURN_ITEM_FIELDS = {
     "item_id",
     "topic",
@@ -309,6 +320,9 @@ class PresalesV2Normalized:
     handoff_reason: str
     handoff_kind: str
     matched_direct_invite_sector_id: str
+    client_sector_text: str
+    canonical_sector_id: str
+    sector_confidence: str
     knowledge_gap: str
     collected_fields_update: Dict[str, str]
     turn_items: List[Dict[str, object]]
@@ -474,8 +488,11 @@ def build_presales_v2_prompt(
             "уже получено и повторно спрашивать его нельзя. Когда человек после "
             "этого однозначно называет сферу, сразу запускай free_test_access: для "
             "точного automatic-соответствия через автоматического бота для "
-            "бесплатного теста, для другой подтверждённой "
-            "сферы через менеджера. Если ответ о сфере неоднозначен, задай одно "
+            "бесплатного теста, для любой другой подтверждённой сферы — тем же "
+            "free_test_access, но с пустым matched_direct_invite_sector_id: "
+            "маршрут выберет система, и человек получит ссылку на общий "
+            "демо-бот. Менеджер в этой развилке не участвует. "
+            "Если ответ о сфере неоднозначен, задай одно "
             "уточнение и сохрани next_state=awaiting_test_sector. "
             "Если conversation_context.free_test_access_branch.branch=automatic "
             "либо явно подтверждённая сфера самого человека точно совпадает с одним "
@@ -491,7 +508,12 @@ def build_presales_v2_prompt(
             "для бесплатного теста придёт отдельно. Менеджера в automatic-ветке "
             "упоминай только при прямом запросе живого человека, созвона или другого "
             "manager-only действия. Если точного automatic-соответствия нет, "
-            "используй обычную менеджерскую ветку. "
+            "оставь handoff_kind=free_test_access и верни пустой "
+            "matched_direct_invite_sector_id: заявку подхватит общий демо-маршрут. "
+            "В этой ветке в reply_text не обещай ни менеджера, ни отдельную "
+            "ссылку: подтверди согласие нейтрально и коротко, потому что письмо "
+            "со ссылкой на демо-бота система подставит вместо твоего текста. "
+            "Отсутствие сферы в каталогах менеджерской веткой не является. "
             "Для каждого handoff обязательно верни структурированный handoff_kind. "
             "Используй free_test_access только когда по смыслу текущего хода и "
             "прямой истории человек просит, принимает или хочет фактически запустить "
@@ -500,6 +522,18 @@ def build_presales_v2_prompt(
             "или другого действия человека используй manager_action. Во всех "
             "действиях без handoff используй none. Не определяй handoff_kind поиском "
             "слов: учитывай объект согласия и весь прямой диалог. "
+            "Список поводов для manager_action закрыт: живой человек, созвон, "
+            "встреча, договор, счёт, оплата, индивидуальная цена или условия, "
+            "юридический и персонально-данный вопрос, жалоба и спор о согласии. "
+            "Ничто другое manager_action не является — ни незнакомая сфера, ни "
+            "отсутствие готовой тестовой группы, ни согласие на тест. "
+            "Если ты не понимаешь, о чём разговор, или утверждённых фактов не "
+            "хватает для ответа по существу, это не повод звать менеджера: верни "
+            "action=knowledge_gap, и человека подхватит команда. "
+            "Всякий раз, когда возвращаешь handoff_kind=free_test_access, "
+            "обязательно заполни collected_fields_update.sector словами человека "
+            "и sector_status=user_confirmed: без подтверждённой сферы ход "
+            "отбраковывается целиком и человек остаётся вообще без ответа. "
             "Для turn_item, который запускает free_test_access, используй "
             "status=action_required; для manager_action используй "
             "status=needs_manager. Не помечай фактический запуск теста как answered, "
@@ -510,9 +544,41 @@ def build_presales_v2_prompt(
             "outreach_sector_id из этого каталога только если сфера самого человека "
             "явно подтверждена его сообщениями в прямом диалоге либо уже дана в "
             "free_test_access_branch. Если подтверждённая сфера другая, верни пустую "
-            "строку: тогда заявку обработает менеджер. Если сферы пока нет или "
+            "строку: заявку подхватит общий демо-маршрут, а не менеджер. Если "
+            "сферы пока нет или "
             "соответствие неоднозначно, handoff запрещён до уточнения. Никогда не "
             "подбирай этот id из слабого публичного фона. "
+            "sector_matching_catalog — словарь сфер для распознавания, а не "
+            "список разрешённых выдач. У каждой строки есть canonical_sector_id, "
+            "описание, синонимы, самоназвания бизнеса, услуги-маркеры, "
+            "разграничители с соседними сферами и признак "
+            "free_test_group_ready. В client_sector_text верни формулировку "
+            "человека его словами, без пересказа и без нормализации; если он "
+            "сферу не называл, верни пустую строку. В canonical_sector_id верни "
+            "id строки словаря, на которую эта формулировка легла, и только его; "
+            "выдуманный или отсутствующий в словаре id недопустим. В "
+            "sector_confidence верни exact, если формулировка однозначно "
+            "совпала с одной строкой по её синонимам, самоназваниям или "
+            "услугам-маркерам; likely, если совпадение вероятно, но требует "
+            "подтверждения человека; ambiguous, если подходят две и более "
+            "строки; none, если не подходит ни одна. Если сфера не названа "
+            "вовсе, верни пустые client_sector_text и canonical_sector_id и "
+            "пустой sector_confidence. Признак free_test_group_ready=false "
+            "означает только отсутствие готовой тестовой группы, а не отказ "
+            "работать со сферой: такую сферу называй обычной рабочей и никогда "
+            "не говори человеку, что его направление нам не подходит. "
+            "Если формулировка человека близка к строке с "
+            "free_test_group_ready=true, но не совпадает с ней по "
+            "разграничителям, ты можешь предложить этот ближайший вариант "
+            "словами, однако до явного подтверждения человека верни "
+            "sector_confidence=likely и не переноси его в эту сферу: доступ в "
+            "неподходящую тестовую группу отзывать придётся руками. "
+            "Ни canonical_sector_id, ни sector_confidence не записывай в "
+            "collected_fields_update: их нормализованные значения принадлежат "
+            "маршруту выдачи, и запись их в поля sector, sector_id или "
+            "direct_invite_sector_id меняет ветку следующего хода. Запрет "
+            "касается только этих двух значений: сферу словами человека в "
+            "collected_fields_update.sector записывать нужно всегда. "
             "Ответ короткий, естественный, по-русски, без длинного тире, эмодзи, "
             "канцелярита и рекламного пафоса. Не пересказывай без пользы только что "
             "сказанное пользователем и выбирай естественный глагол для вложения, а "
@@ -879,6 +945,7 @@ def normalize_presales_v2_result(
     allowed_direct_invite_sector_ids: Iterable[str] = (),
     required_direct_invite_sector_id: str = "",
     confirmed_sector_available: bool = False,
+    known_canonical_sector_ids: Iterable[str] = (),
 ) -> PresalesV2Normalized:
     wrapper_reason = str(raw.get("reason") or "").strip()
     if wrapper_reason.startswith("codex_wrapper_"):
@@ -912,6 +979,9 @@ def normalize_presales_v2_result(
         "handoff_reason",
         "handoff_kind",
         "matched_direct_invite_sector_id",
+        "client_sector_text",
+        "canonical_sector_id",
+        "sector_confidence",
         "knowledge_gap",
         "reason",
     ):
@@ -1120,6 +1190,37 @@ def normalize_presales_v2_result(
         return technical_failure_result(
             "presales_v2_direct_invite_sector_not_allowlisted"
         )
+    # Сопоставление сферы со словарём. Здесь принципиально мягкая проверка:
+    # непонятное значение приводим к «не знаю», а не рушим весь ответ.
+    #
+    # Жёсткий отказ тут был бы хуже бесполезного. Он уходит в повторную
+    # попытку, а та дословно сообщает модели, какое значение от неё ждут, —
+    # и модель со второго раза уверенно называет ту самую сферу, в которой
+    # только что сомневалась. Пустая строка честнее: она просто оставляет
+    # разговор менеджеру.
+    sector_warnings: list[str] = []
+    client_sector_text = str(raw.get("client_sector_text") or "").strip()[:200]
+    canonical_sector_id = str(raw.get("canonical_sector_id") or "").strip()
+    sector_confidence = str(raw.get("sector_confidence") or "").strip().lower()
+
+    if sector_confidence not in PRESALES_V2_SECTOR_CONFIDENCE:
+        sector_warnings.append(f"sector_confidence_unknown:{sector_confidence}")
+        sector_confidence = ""
+    known_canonical = {
+        str(item or "").strip()
+        for item in known_canonical_sector_ids
+        if str(item or "").strip()
+    }
+    if canonical_sector_id and known_canonical and (
+        canonical_sector_id not in known_canonical
+    ):
+        sector_warnings.append(f"canonical_sector_unknown:{canonical_sector_id}")
+        canonical_sector_id = ""
+    if not canonical_sector_id and sector_confidence == "exact":
+        # Точно сопоставить не с чем.
+        sector_warnings.append("sector_confidence_without_sector")
+        sector_confidence = ""
+
     required_sector_id = str(required_direct_invite_sector_id or "").strip()
     turn_sector_confirmed = bool(str(collected.get("sector") or "").strip())
     sector_confirmed = bool(
@@ -1170,6 +1271,9 @@ def normalize_presales_v2_result(
         handoff_reason=handoff_reason,
         handoff_kind=handoff_kind,
         matched_direct_invite_sector_id=matched_direct_invite_sector_id,
+        client_sector_text=client_sector_text,
+        canonical_sector_id=canonical_sector_id,
+        sector_confidence=sector_confidence,
         knowledge_gap=knowledge_gap,
         collected_fields_update=collected,
         turn_items=turn_items,
@@ -1178,7 +1282,7 @@ def normalize_presales_v2_result(
         coverage_complete=True,
         reason=reason,
         technical_failure=False,
-        validation_warnings=warnings,
+        validation_warnings=warnings + sector_warnings,
     )
 
 
@@ -1295,6 +1399,9 @@ def technical_failure_result(reason: str) -> PresalesV2Normalized:
         handoff_reason="",
         handoff_kind="none",
         matched_direct_invite_sector_id="",
+        client_sector_text="",
+        canonical_sector_id="",
+        sector_confidence="",
         knowledge_gap="",
         collected_fields_update={},
         turn_items=[],

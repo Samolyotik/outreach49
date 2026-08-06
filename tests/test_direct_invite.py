@@ -269,6 +269,30 @@ class LegalVersusBankruptcyTests(unittest.TestCase):
         self.assertEqual(
             self.store.one("SELECT COUNT(*) AS n FROM direct_invites")["n"], 0)
 
+    def test_the_conflict_is_visible_from_outside(self):
+        """Отказ гейта обязан быть виден вызывающему, а не только журналу.
+
+        Изнутри `record_consent` он неотличим от «сфера не подошла», а разница
+        решающая: сфера-то как раз известна и группа у неё есть, просто не та.
+        Увести такой разговор в общий демо-бот значило бы подменить настоящий
+        доступ демонстрацией и потерять предохранитель целиком.
+        """
+        conflict = direct_invite.specialization_conflict(
+            self.branch,
+            decision={"matched_direct_invite_sector_id": self.LEGAL},
+            inbound={"text": "Мы юристы, помогаем списывать долги"})
+        self.assertIn(self.BANKRUPTCY, conflict)
+
+    def test_a_clean_sector_reports_no_conflict(self):
+        for sector, text in ((self.LEGAL, "Нужна проверка договора"),
+                             (self.BANKRUPTCY, "Помогите списать долги"),
+                             ("", "Мы занимаемся банкротством")):
+            with self.subTest(sector=sector):
+                self.assertEqual(direct_invite.specialization_conflict(
+                    self.branch,
+                    decision={"matched_direct_invite_sector_id": sector},
+                    inbound={"text": text}), "")
+
     def test_plain_legal_requests_are_not_blocked(self):
         """Гейт умеет только запрещать и без явных слов молчит."""
         for n, text in enumerate((
@@ -956,3 +980,496 @@ class OrphanRescueTests(unittest.TestCase):
         self.assertEqual(result["спасено"], 1)
         self.assertEqual(result["выпущено"], 1, "спасённая заявка не уехала")
         self.assertEqual(self.status("d1"), direct_invite.STATUS_CREATED)
+
+
+CATALOG = {
+    "schema_version": 2,
+    "demo_bot_link": "https://t.me/tg_radar_robot?start=outreach",
+    "sectors": [
+        {
+            "canonical_sector_id": "auto_import_dealers",
+            "sector_name": "Авто из-за границы",
+            "status": "ready",
+            "synonyms": ["пригон авто"],
+            "boundaries": [{"vs": "logistics_ved_china", "rule": "товар — ВЭД"}],
+        },
+        {
+            "canonical_sector_id": "crm_1c",
+            "sector_name": "CRM, 1С и автоматизация продаж",
+            "status": "manual",
+            "self_names": ["интегрируем Битрикс"],
+        },
+        {
+            "canonical_sector_id": "furniture_made_to_order",
+            "sector_name": "Мебель на заказ",
+            "status": "out_of_scope",
+            "self_names": ["делаем кухни на заказ"],
+        },
+    ],
+}
+
+
+def write_catalog(directory: Path, **overrides) -> Path:
+    payload = dict(CATALOG)
+    payload.update(overrides)
+    path = directory / "catalog.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+class SectorCatalogTests(unittest.TestCase):
+    """Словарь сфер только добавляет.
+
+    Проверяется прежде всего обратное: что он не может ничего отнять. Конфиг
+    маршрутов при сомнении обязан молчать, а словарь при сомнении обязан
+    отойти в сторону и дать шести боевым сферам работать как вчера.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.branch = direct_invite.BranchConfig.from_path(write_config(self.dir))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_without_a_catalog_nothing_changes(self):
+        attached = self.branch.with_sector_catalog("")
+        self.assertIs(attached, self.branch)
+        self.assertEqual(self.branch.sector_rows, {})
+        self.assertEqual(self.branch.demo_bot_link, "")
+        self.assertFalse(self.branch.demo_route_ready())
+
+    def test_broken_catalog_does_not_switch_the_branch_off(self):
+        """Главный инвариант всей правки."""
+        for payload in ("не json вовсе", json.dumps({"schema_version": 9})):
+            with self.subTest(payload=payload[:20]):
+                path = self.dir / "broken.json"
+                path.write_text(payload, encoding="utf-8")
+                attached = self.branch.with_sector_catalog(path)
+                self.assertTrue(attached.enabled, "битый словарь погасил выдачу")
+                self.assertEqual(
+                    attached.route_for("auto_import_dealers").sector_id,
+                    "cars_abroad")
+                self.assertEqual(attached.sector_rows, {})
+                self.assertTrue(attached.catalog_warnings)
+
+    def test_missing_catalog_file_is_survivable(self):
+        attached = self.branch.with_sector_catalog(self.dir / "нет-такого.json")
+        self.assertTrue(attached.enabled)
+        self.assertTrue(attached.catalog_warnings)
+
+    def test_allowlist_is_never_narrowed_by_the_catalog(self):
+        """Сфера, помеченная в словаре как manual, всё равно выдаётся.
+
+        Иначе получается худший из исходов: модель по-прежнему видит сферу
+        автоматической, обязана пообещать ссылку и не имеет права упомянуть
+        менеджера, а выпуск молча отказывает.
+        """
+        demoted = dict(CATALOG)
+        demoted["sectors"] = [
+            {**row, "status": "manual"} if row["canonical_sector_id"]
+            == "auto_import_dealers" else row
+            for row in CATALOG["sectors"]
+        ]
+        path = self.dir / "demoted.json"
+        path.write_text(json.dumps(demoted, ensure_ascii=False), encoding="utf-8")
+        attached = self.branch.with_sector_catalog(path)
+        self.assertEqual(
+            attached.route_for("auto_import_dealers").test_group_profile_id,
+            "cars_abroad_test_group")
+        self.assertTrue(
+            any("помечена как manual" in note
+                for note in attached.catalog_warnings),
+            attached.catalog_warnings)
+
+    def test_disagreements_are_reported_both_ways(self):
+        attached = self.branch.with_sector_catalog(write_catalog(self.dir))
+        self.assertEqual(attached.catalog_warnings, ())
+        lonely = self.branch.with_sector_catalog(write_catalog(
+            self.dir, sectors=[{
+                "canonical_sector_id": "crm_1c",
+                "sector_name": "CRM",
+                "status": "ready",
+            }]))
+        notes = " | ".join(lonely.catalog_warnings)
+        self.assertIn("auto_import_dealers", notes)
+        self.assertIn("crm_1c", notes)
+
+    def test_allowlist_shown_to_the_engine_is_untouched(self):
+        """Пин: словарь не просачивается в список разрешённых сфер."""
+        before = self.branch.active_sector_catalog()
+        after = self.branch.with_sector_catalog(
+            write_catalog(self.dir)).active_sector_catalog()
+        self.assertEqual(before, after)
+        self.assertEqual(
+            set(after[0]), {"outreach_sector_id", "sector_id", "sector_name"})
+
+    def test_matching_catalog_puts_ready_sectors_first(self):
+        attached = self.branch.with_sector_catalog(write_catalog(self.dir))
+        rows = attached.matching_catalog()
+        self.assertEqual(rows[0]["canonical_sector_id"], "auto_import_dealers")
+        self.assertTrue(rows[0]["free_test_group_ready"])
+        self.assertFalse(all(row["free_test_group_ready"] for row in rows))
+        self.assertNotIn("note", json.dumps(rows, ensure_ascii=False))
+        self.assertNotIn("status", rows[0], "статус наружу не отдаём")
+
+    def test_status_is_remembered_but_routing_is_not_split(self):
+        attached = self.branch.with_sector_catalog(write_catalog(self.dir))
+        self.assertEqual(attached.sector_status("crm_1c"), "manual")
+        self.assertEqual(
+            attached.sector_status("furniture_made_to_order"), "out_of_scope")
+        self.assertEqual(attached.sector_status("незнакомая"), "")
+
+    def test_duplicate_and_unknown_status_are_rejected(self):
+        for sectors in (
+            [CATALOG["sectors"][0], CATALOG["sectors"][0]],
+            [{**CATALOG["sectors"][0], "status": "почти готово"}],
+        ):
+            with self.subTest(sectors=sectors[0]["status"]):
+                with self.assertRaises(direct_invite.DirectInviteError):
+                    direct_invite.load_sector_catalog(
+                        write_catalog(self.dir, sectors=sectors))
+
+
+class DemoMessageTests(unittest.TestCase):
+    """Письмо демо-бота. Один смысл на все сферы, поэтому ничего не обещает."""
+
+    LINK = "https://t.me/tg_radar_robot?start=outreach"
+
+    def render(self, seed: str = "c_demo") -> str:
+        return direct_invite.render_demo_message(self.LINK, seed=seed)
+
+    def every_variant(self):
+        """Все сочетания блоков. Проверять надо их, а не один образец."""
+        seen: dict[str, str] = {}
+        for index in range(400):
+            seed = f"contact-{index}"
+            text = self.render(seed)
+            seen[text] = seed
+        return seen
+
+    def test_link_is_masked_by_the_bot_handle(self):
+        for text in self.every_variant():
+            with self.subTest(text=text[:40]):
+                self.assertIn(f"[@tg_radar_robot]({self.LINK})", text)
+                self.assertEqual(text.count(self.LINK), 1)
+
+    def test_it_never_names_a_sector(self):
+        """Назвать направление значит пообещать группу под него."""
+        catalog_path = (Path(__file__).resolve().parents[1]
+                        / "deployment/sector-catalog.json")
+        rows = json.loads(catalog_path.read_text(encoding="utf-8"))["sectors"]
+        for text in self.every_variant():
+            lowered = text.lower()
+            for row in rows:
+                with self.subTest(row["canonical_sector_id"]):
+                    self.assertNotIn(row["sector_name"].lower(), lowered)
+
+    def test_it_promises_nothing_that_belongs_to_the_personal_link(self):
+        for text in self.every_variant():
+            lowered = text.lower()
+            for word in ("одноразов", "закрепится", "персональн", "один раз",
+                         "тестовая группа"):
+                with self.subTest(word=word, text=text[:40]):
+                    self.assertNotIn(word, lowered)
+
+    def test_brand_and_internal_names_survive_every_variant(self):
+        from bridge49 import presales_v2
+        for text in self.every_variant():
+            with self.subTest(text=text[:40]):
+                self.assertFalse(
+                    presales_v2.contains_internal_startbot_name(text))
+                self.assertFalse(
+                    presales_v2.contains_noncanonical_brand_spelling(text))
+                self.assertNotIn("—", text, "длинное тире запрещено промптом")
+
+    def test_the_same_recipient_always_gets_the_same_letter(self):
+        """Повторная сборка при повторе отправки не должна менять текст."""
+        self.assertEqual(self.render("c_17"), self.render("c_17"))
+
+    def test_different_recipients_get_different_letters(self):
+        """Один и тот же текст с шести аккаунтов это заметный шаблон."""
+        variants = self.every_variant()
+        self.assertGreaterEqual(len(variants), 16, "вариативности почти нет")
+
+    def test_a_letter_without_a_recipient_seed_is_refused(self):
+        """Сид по ссылке дал бы всем один текст: ссылка у всех одна."""
+        for bad in ("", "   "):
+            with self.subTest(bad=repr(bad)), self.assertRaises(
+                    direct_invite.DirectInviteError):
+                direct_invite.render_demo_message(self.LINK, seed=bad)
+
+    def test_a_link_outside_telegram_is_refused(self):
+        for bad in ("", "https://tgradar.ru/demo", "https://t.me/"):
+            with self.subTest(bad), self.assertRaises(
+                    direct_invite.DirectInviteError):
+                direct_invite.render_demo_message(bad, seed="c_demo")
+
+
+class DemoInviteTests(unittest.TestCase):
+    """Демо-маршрут: сфера подтверждена, готовой тестовой группы под неё нет.
+
+    Проверяется в первую очередь то, чего человек не должен получить: второе
+    демо-письмо, демо поверх уже выданной персональной ссылки и демо по сфере,
+    которой положен настоящий доступ.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.store = Store(self.dir / "b.sqlite")
+        self.branch = direct_invite.BranchConfig.from_path(
+            write_config(self.dir)).with_sector_catalog(write_catalog(self.dir))
+        for account in (821, 833):
+            self.store.execute(
+                "INSERT INTO accounts(id, label, role, roles, enabled, paused, "
+                "runtime_state, synced_at) VALUES(?,?,'dm_sender',"
+                "'[\"dm_sender\"]',1,0,'running',?)",
+                (account, f"a{account}", now()))
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, segment, created_at, "
+            "updated_at) VALUES('c1','user','someone','default',?,?)",
+            (now(), now()))
+        # Два треда одного человека, с разных наших отправителей.
+        for thread, account in (("th1", 821), ("th2", 833)):
+            self.store.execute(
+                "INSERT INTO threads(id, account_id, peer_key, contact_id, "
+                "surface, created_at, updated_at) "
+                "VALUES(?,?,'@someone','c1','private_dm',?,?)",
+                (thread, account, now(), now()))
+        # Ответ ставится на конкретное входящее, поэтому оно должно быть в базе.
+        for inbound_id, account in ((5001, 821), (5002, 833), (5003, 821),
+                                    (5004, 821)):
+            self.store.execute(
+                "INSERT INTO inbound(id, account_id, surface, peer_key, "
+                "peer_username, contact_id, text, sent_at, raw, created_at) "
+                "VALUES(?,?,'private_dm','@someone','someone','c1',"
+                "'Покажите тест',?,'{}',?)",
+                (inbound_id, account, now(), now()))
+        self.store.commit()
+        self.thread = dict(self.store.one("SELECT * FROM threads WHERE id='th1'"))
+        self.inbound = {"id": "5001", "account_id": 821}
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def record(self, **overrides):
+        kwargs = {
+            "config": self.branch,
+            "thread": self.thread,
+            "inbound": self.inbound,
+            "account_role": "dm_sender",
+            "canonical_sector_id": "crm_1c",
+        }
+        kwargs.update(overrides)
+        result = direct_invite.record_demo_invite(self.store, **kwargs)
+        self.store.commit()
+        return result
+
+    def rows(self) -> list[dict]:
+        return [dict(row) for row in self.store.query(
+            "SELECT * FROM demo_invites ORDER BY created_at")]
+
+    def test_a_sector_we_lead_without_a_test_group_gets_the_demo(self):
+        row = self.record()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["status"], direct_invite.DEMO_STATUS_QUEUED)
+        self.assertEqual(row["sector_status"], "manual")
+        # Задачу ставит вызывающий: письмо должно уехать одним сообщением
+        # вместе с ответом движка, а не вторым письмом следом.
+        self.assertIsNone(row["task_id"])
+        self.assertIn("t.me/tg_radar_robot", row["text"])
+        self.assertEqual(len(self.rows()), 1)
+
+    def test_a_sector_we_do_not_lead_gets_the_same_demo(self):
+        """Маршрут не расщеплён: ловушка и своя сфера идут одинаково."""
+        row = self.record(canonical_sector_id="furniture_made_to_order")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["sector_status"], "out_of_scope")
+
+    def test_a_ready_sector_never_gets_the_demo(self):
+        """Готовой сфере положен настоящий доступ."""
+        self.assertIsNone(self.record(canonical_sector_id="auto_import_dealers"))
+        self.assertEqual(self.rows(), [])
+
+    def test_an_unknown_sector_gets_the_demo_too(self):
+        """Сферы нет в словаре — человек всё равно получает ссылку.
+
+        Письмо демо-бота сферу не называет, поэтому знать её незачем: она
+        решает только вопрос «а не положен ли настоящий доступ». В колонках
+        остаётся честная отметка, что сферу не опознали, — иначе в отчёте
+        такой человек неотличим от того, чья сфера известна.
+        """
+        row = self.record(canonical_sector_id="китобойный промысел")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["canonical_sector_id"], "")
+        self.assertEqual(row["sector_status"],
+                         direct_invite.SECTOR_STATUS_UNKNOWN)
+        self.assertIn("t.me/tg_radar_robot", row["text"])
+
+    def test_a_person_who_never_named_a_sector_gets_the_demo(self):
+        """Пустая сфера — тот же случай, а не отдельный."""
+        row = self.record(canonical_sector_id="")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["sector_status"],
+                         direct_invite.SECTOR_STATUS_UNKNOWN)
+
+    def test_one_demo_per_person_even_from_another_account(self):
+        """Ключ по контакту, а не по треду.
+
+        У одного человека может быть несколько тредов с разных наших
+        отправителей. Ключ по треду означал бы столько же демо-писем.
+        """
+        self.assertIsNotNone(self.record())
+        other = dict(self.store.one("SELECT * FROM threads WHERE id='th2'"))
+        again = self.record(thread=other, inbound={"id": "5002",
+                                                   "account_id": 833})
+        self.assertIsNone(again)
+        self.assertEqual(len(self.rows()), 1)
+
+    def test_a_personal_link_blocks_the_demo(self):
+        """Настоящий доступ уже выдан: демо было бы шагом назад."""
+        direct_invite.record_consent(
+            self.store, config=self.branch, thread=self.thread,
+            inbound=self.inbound, account_role="dm_sender",
+            sector_id="auto_import_dealers")
+        self.store.commit()
+        self.assertIsNone(self.record())
+        self.assertEqual(self.rows(), [])
+
+    def test_a_cancelled_demo_allows_exactly_one_resend(self):
+        """Снятое письмо собирается заново, и строка при этом та же."""
+        first = self.record()
+        self.store.execute(
+            "UPDATE demo_invites SET status = ? WHERE id = ?",
+            (direct_invite.DEMO_STATUS_CANCELLED, first["id"]))
+        self.store.commit()
+        second = self.record(inbound={"id": "5003", "account_id": 821})
+        self.assertIsNotNone(second)
+        self.assertEqual(second["id"], first["id"], "завелась вторая строка")
+        self.assertEqual(second["inbound_id"], "5003")
+        self.assertEqual(len(self.rows()), 1)
+        self.assertIsNone(self.record(inbound={"id": "5004", "account_id": 821}))
+
+    def test_a_thread_without_a_contact_does_not_crash_the_turn(self):
+        """Сегодня такой тред роняет разбор по внешнему ключу."""
+        orphan = dict(self.thread)
+        orphan["contact_id"] = ""
+        self.assertIsNone(self.record(thread=orphan))
+
+    def test_without_a_catalog_the_route_is_off(self):
+        bare = direct_invite.BranchConfig.from_path(write_config(self.dir))
+        self.assertIsNone(self.record(config=bare))
+        self.assertEqual(self.rows(), [])
+
+    def test_role_without_channel_is_refused(self):
+        self.assertIsNone(self.record(account_role="source_reader"))
+
+    def test_the_unknown_marker_is_not_a_catalog_status(self):
+        """Строка словаря с таким статусом не прочиталась бы вовсе.
+
+        Маркер живёт только в колонке `demo_invites.sector_status` и означает
+        «сферу не опознали». Попади он в список статусов словаря — и опечатка
+        в самом словаре перестала бы ломаться.
+        """
+        self.assertNotIn(direct_invite.SECTOR_STATUS_UNKNOWN,
+                         direct_invite.SECTOR_STATUSES)
+
+
+class ConsentLeftUnservedTests(unittest.TestCase):
+    """Различие «не смогли выдать» и «выдавать уже незачем».
+
+    Оба выглядят одинаково — ни ссылки, ни демо, — но первое обязано дойти до
+    менеджера, а второе не должно его беспокоить: у человека доступ уже есть.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.branch = direct_invite.BranchConfig.from_path(
+            write_config(self.dir)).with_sector_catalog(
+                write_catalog(self.dir))
+        self.store = Store(self.dir / "b.sqlite")
+        self.store.execute(
+            "INSERT INTO accounts(id, label, role, roles, enabled, paused, "
+            "runtime_state, synced_at) VALUES(821,'a821','dm_sender',"
+            "'[\"dm_sender\"]',1,0,'running',?)", (now(),))
+        self.store.execute(
+            "INSERT INTO contacts(id, kind, username, segment, created_at, "
+            "updated_at) VALUES('c1','user','someone','default',?,?)",
+            (now(), now()))
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "created_at, updated_at) "
+            "VALUES('th1',821,'@someone','c1','private_dm',?,?)",
+            (now(), now()))
+        self.store.commit()
+        self.thread = {"id": "th1", "contact_id": "c1"}
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def unserved(self, **extra):
+        kwargs = {"store": self.store, "thread": self.thread,
+                  "account_role": "dm_sender"}
+        kwargs.update(extra)
+        return direct_invite.consent_left_unserved(self.branch, **kwargs)
+
+    def test_an_unexplained_failure_still_reaches_a_human(self):
+        """Умолчание — «не смогли», а не «человек обслужен».
+
+        Причин отказа у выдачи семь, и перечислить их все здесь нельзя: список
+        разойдётся с `record_demo_invite` при первой же правке. Поэтому
+        пустоту возвращают только два случая, каждый из которых проверяется
+        по базе.
+        """
+        self.assertTrue(self.unserved())
+
+    def test_a_person_with_a_personal_link_is_left_alone(self):
+        self.store.execute(
+            "INSERT INTO direct_invites(id, request_id, contact_id, thread_id, "
+            "account_id, inbound_id, source_channel, outreach_sector_id, "
+            "sector_id, sector_name, test_group_profile_id, "
+            "consent_recorded_at, consent_source, status, created_at, "
+            "updated_at) "
+            "VALUES('di1','r1',?, 'th1',821,'5001','private_dm',"
+            "'auto_import_dealers','auto_import_dealers','Авто','g1',?,"
+            "'test',?,?,?)",
+            ("c1", now(), direct_invite.STATUS_DELIVERED, now(), now()))
+        self.store.commit()
+        self.assertEqual(self.unserved(), "")
+
+    def test_a_person_who_already_got_the_demo_is_left_alone(self):
+        self.store.execute(
+            "INSERT INTO demo_invites(id, contact_id, thread_id, account_id, "
+            "inbound_id, source_channel, canonical_sector_id, sector_status, "
+            "status, created_at, updated_at) "
+            "VALUES('dm1',?, 'th1',821,'5001','private_dm','','unknown',?,?,?)",
+            ("c1", direct_invite.DEMO_STATUS_QUEUED, now(), now()))
+        self.store.commit()
+        self.assertEqual(self.unserved(), "")
+
+    def test_a_cancelled_demo_does_not_count_as_served(self):
+        self.store.execute(
+            "INSERT INTO demo_invites(id, contact_id, thread_id, account_id, "
+            "inbound_id, source_channel, canonical_sector_id, sector_status, "
+            "status, created_at, updated_at) "
+            "VALUES('dm1',?, 'th1',821,'5001','private_dm','','unknown',?,?,?)",
+            ("c1", direct_invite.DEMO_STATUS_CANCELLED, now(), now()))
+        self.store.commit()
+        self.assertTrue(self.unserved())
+
+    def test_a_thread_without_a_contact_is_reported(self):
+        self.assertTrue(self.unserved(thread={"id": "th1", "contact_id": ""}))
+
+    def test_a_role_without_a_channel_is_reported(self):
+        self.assertTrue(self.unserved(account_role="source_reader"))
+
+    def test_a_branch_without_a_catalog_is_reported(self):
+        bare = direct_invite.BranchConfig.from_path(write_config(self.dir))
+        self.assertTrue(direct_invite.consent_left_unserved(
+            bare, store=self.store, thread=self.thread,
+            account_role="dm_sender"))

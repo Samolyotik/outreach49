@@ -157,5 +157,50 @@ class RefusedIndexTests(unittest.TestCase):
             reopened.close()
 
 
+
+class DemoRouteGateTests(unittest.TestCase):
+    """Мастер-гейт обязан выключать и демо-маршрут, а не только StartBot."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "t_di", ROOT / "tests" / "test_direct_invite.py")
+        self.helpers = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.helpers)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def branch(self, *, enabled: bool):
+        from bridge49 import direct_invite
+        path = self.helpers.write_config(self.dir, enabled=enabled)
+        return direct_invite.BranchConfig.from_path(path).with_sector_catalog(
+            self.helpers.write_catalog(self.dir))
+
+    def test_disabled_branch_does_not_send_demo(self):
+        """Флаг выключал только StartBot, а демо продолжало уходить.
+
+        Мастер-гейт — единственная ручка «автоматика ничего не делает сама».
+        Хуже того, непрочитавшийся конфиг тоже даёт выключенную ветку, но
+        словарь сфер к ней всё равно подвешивался: неудачная правка общего
+        файла не останавливала маршрут, а молча оставляла его работать.
+        """
+        self.assertFalse(self.branch(enabled=False).demo_route_ready())
+
+    def test_enabled_branch_sends_demo(self):
+        self.assertTrue(self.branch(enabled=True).demo_route_ready())
+
+    def test_a_config_that_failed_to_load_sends_nothing(self):
+        from bridge49 import direct_invite
+        broken = self.dir / "broken.json"
+        broken.write_text("{ не json", encoding="utf-8")
+        branch = direct_invite.BranchConfig.disabled(str(broken))
+        self.assertFalse(
+            branch.with_sector_catalog(
+                self.helpers.write_catalog(self.dir)).demo_route_ready())
+
+
 if __name__ == "__main__":
     unittest.main()

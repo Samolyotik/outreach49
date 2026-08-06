@@ -529,6 +529,23 @@ def native_output_schema(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         )
         if sector_id and sector_id not in direct_invite_sector_ids:
             direct_invite_sector_ids.append(sector_id)
+    matching_catalog = (
+        conversation_context.get("sector_matching_catalog")
+        if isinstance(conversation_context, dict)
+        else []
+    )
+    # Пустая строка идёт первой и всегда: это «не знаю», и модель обязана иметь
+    # право так ответить. Без неё уверенное сопоставление становится
+    # обязательным, а обязательная уверенность и есть источник ошибочных выдач.
+    canonical_sector_ids = [""]
+    for item in matching_catalog if isinstance(matching_catalog, list) else []:
+        canonical_id = (
+            str(item.get("canonical_sector_id") or "").strip()
+            if isinstance(item, dict)
+            else ""
+        )
+        if canonical_id and canonical_id not in canonical_sector_ids:
+            canonical_sector_ids.append(canonical_id)
     string_field = {"type": "string"}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -544,6 +561,9 @@ def native_output_schema(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "handoff_reason",
             "handoff_kind",
             "matched_direct_invite_sector_id",
+            "client_sector_text",
+            "canonical_sector_id",
+            "sector_confidence",
             "knowledge_gap",
             "collected_fields_update",
             "coverage_complete",
@@ -598,6 +618,15 @@ def native_output_schema(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "matched_direct_invite_sector_id": {
                 "type": "string",
                 "enum": direct_invite_sector_ids,
+            },
+            "client_sector_text": string_field,
+            "canonical_sector_id": {
+                "type": "string",
+                "enum": canonical_sector_ids,
+            },
+            "sector_confidence": {
+                "type": "string",
+                "enum": ["", "exact", "likely", "ambiguous", "none"],
             },
             "knowledge_gap": string_field,
             "collected_fields_update": {
@@ -876,6 +905,9 @@ def error_response_for_payload(
         "handoff_reason": "",
         "handoff_kind": "none",
         "matched_direct_invite_sector_id": "",
+        "client_sector_text": "",
+        "canonical_sector_id": "",
+        "sector_confidence": "",
         "knowledge_gap": detail,
         "collected_fields_update": {},
         "coverage_complete": False,

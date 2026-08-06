@@ -96,9 +96,22 @@ SILENT_DECISIONS = frozenset({"opt_out", "ignore", "hold_for_review"})
 #: человеку.
 #:
 #: `manager_handoff` оставлен как страховка на случай, если такое имя появится.
+#:
+#: ⚠️ Членство в этом списке — необходимое условие карточки, но с 06.08 уже не
+#: достаточное: решает `manager_card_reason` ниже. Список остался, чтобы
+#: опечатка в имени вердикта по-прежнему ломалась, а не тихо молчала.
 HANDOFF_DECISIONS = frozenset({"reply_and_handoff", "handoff",
                                "manager_handoff", "knowledge_gap",
                                "hold_for_review"})
+
+#: Вердикты «движок не понял, о чём разговор».
+#:
+#: `knowledge_gap` — не хватило утверждённых фактов, движок честно об этом
+#: сказал. `hold_for_review` — сорвался контракт с моделью: ответа нет вовсе,
+#: и что там было, знает только человек. Оба — законный повод звать менеджера
+#: и оба обязаны его звать: это единственный способ узнать о непредсказуемом
+#: сценарии.
+UNCLEAR_DECISIONS = frozenset({"knowledge_gap", "hold_for_review"})
 
 #: Весь словарь вердиктов движка. Нужен не для работы, а для проверки: список
 #: выше обязан быть его подмножеством, иначе опечатка снова превратится в тихий
@@ -410,6 +423,11 @@ def build_context(
         "discovery_context": discovery_context(thread),
         "semantic_handoff_active": handoff is not None,
         "direct_invite_sector_catalog": branch.active_sector_catalog(),
+        # Словарь для сопоставления сферы. Отдельный ключ, а не обогащение
+        # каталога выше: тот одновременно и список разрешённых для выдачи
+        # сфер, и enum обёртки, и его изменение поменяло бы поведение шести
+        # боевых сфер.
+        "sector_matching_catalog": branch.matching_catalog(),
         "direct_invite_context": branch_context or {},
         "free_test_access_branch": branch_context or {"branch": "manager"},
     }
@@ -426,6 +444,38 @@ def remember_discovery(store: Store, thread: dict, update: dict) -> None:
         "UPDATE threads SET presales_context = ?, updated_at = ? WHERE id = ?",
         (dumps(merged), now(), thread["id"]),
     )
+
+
+def manager_card_reason(verdict: str, decision: dict) -> str:
+    """Зачем этому разговору живой человек. Пустая строка — незачем.
+
+    До 06.08 карточку заводил сам вердикт: любой `reply_and_handoff` звал
+    менеджера. Но вердикт говорит «этот ход требует человека», а не «какого
+    именно» — и в него одинаково попадали просьба о договоре и согласие на
+    бесплатный тест. Второе человеку не нужно: тест выдаёт автоматика.
+
+    Поводов ровно три, и все три — про то, что автоматике тут делать нечего:
+
+    * человек прямо попросил живого — менеджера, созвон, счёт, договор,
+      индивидуальные условия. Это `handoff_kind=manager_action`;
+    * движок не понял разговор (`UNCLEAR_DECISIONS`);
+    * сработал детерминированный префильтр до модели — сегодня это резкий
+      отказ или жалоба. Отличить его можно по отсутствию `handoff_kind`:
+      префильтр этот ключ не кладёт вовсе, а движок обязан вернуть одно из
+      трёх известных значений, иначе ход валится в `technical_failure`.
+      Владелец о жалобах не говорил, но терять их нельзя: лишняя карточка
+      стоит минуты внимания, потерянная жалоба — отношений с человеком.
+    """
+    if verdict in UNCLEAR_DECISIONS:
+        return "движок не понял разговор"
+    if verdict not in HANDOFF_DECISIONS:
+        return ""
+    kind = str(decision.get("handoff_kind") or "").strip().lower()
+    if kind == direct_invite.MANAGER_HANDOFF_KIND:
+        return "человек просит живого"
+    if not kind and decision.get("handoff_required"):
+        return "резкий отказ или жалоба"
+    return ""
 
 
 def open_handoff(store: Store, thread: dict, reason: str, note: str = "") -> str:
@@ -519,6 +569,10 @@ def apply(
         # Ссылка выпущена прямо здесь и уедет этим же письмом. Пусто — значит
         # письмо обещает её отдельно, а выпуск подберёт свой проход.
         "invite_inline": "",
+        # Демо-бот: сфера подтверждена, готовой тестовой группы под неё нет.
+        # Непустая означает, что письмо со ссылкой на демо-бота уже собрано и
+        # заменило собой ответ движка — и что карточку заводить не нужно.
+        "demo": "",
     }
 
     remember_discovery(store, thread, decision.get("collected_fields_update") or {})
@@ -559,10 +613,18 @@ def apply(
     #
     # Если ветка не подошла (выключена, сфера чужая, канал не тот), всё идёт
     # прежним путём. Автоматика умеет только добавлять.
+    conflict = ""
     if direct_invite.consent_from_decision(decision):
+        branch = branch_config or direct_invite.BranchConfig.from_env()
+        # Считаем до выдачи: гейт специализации отказывает молча внутри
+        # `record_consent`, и снаружи его отказ неотличим от «сфера не подошла».
+        # Разница принципиальная: он срабатывает как раз тогда, когда у сферы
+        # готовая группа есть, просто не та, что выбрала модель.
+        conflict = direct_invite.specialization_conflict(
+            branch, decision=decision, inbound=inbound)
         recorded = direct_invite.record_consent(
             store,
-            config=branch_config or direct_invite.BranchConfig.from_env(),
+            config=branch,
             thread=thread,
             inbound=inbound,
             account_role=account_role_for(store, inbound),
@@ -589,10 +651,61 @@ def apply(
                 store, thread,
                 {"direct_invite_sector_id": str(recorded["outreach_sector_id"])},
             )
+        elif not conflict and reply_text and (
+            verdict not in SILENT_DECISIONS or verdict == "ignore"
+        ):
+            # Согласие есть, а готовой тестовой группы под эту сферу нет —
+            # либо сферу вообще не опознали. Человек идёт в общий демо-бот и
+            # там сам решает, нужны ли ему примеры под своё направление и
+            # менеджер. Карточку в этой ветке не заводим намеренно: разговор
+            # продолжается внутри бота.
+            #
+            # Письмо уезжает тем же одним сообщением, что и ответ движка, по
+            # тем же соображениям, что и ссылка StartBot: отдельная задача
+            # второго письма не даёт, её снимает `supersede` ответа.
+            #
+            # Условие выше не формальность: письмо ЗАМЕНЯЕТ ответ движка, и
+            # войти сюда на ходу, где движок выбрал молчание, значило бы
+            # заговорить там, где решено было промолчать. А раз карточку эта
+            # ветка не заводит, человек остался бы вообще без продолжения.
+            demo = direct_invite.record_demo_invite(
+                store,
+                config=branch_config or direct_invite.BranchConfig.from_env(),
+                thread=thread,
+                inbound=inbound,
+                account_role=account_role_for(store, inbound),
+                canonical_sector_id=(
+                    direct_invite.canonical_sector_from_decision(decision)
+                ),
+                actor=actor,
+            )
+            if demo is not None:
+                reply_text = str(demo["text"])
+                result["demo"] = str(demo["id"])
 
-    if verdict in HANDOFF_DECISIONS and not result["invite"]:
-        note = str(decision.get("knowledge_gap") or decision.get("reason") or "")
-        result["handoff"] = open_handoff(store, thread, verdict, note)
+    if not result["invite"] and not result["demo"]:
+        why = manager_card_reason(verdict, decision) or conflict
+        if not why and direct_invite.consent_from_decision(decision):
+            # Согласие было, а автоматика не выдала ничего. Различить надо два
+            # случая: у человека уже есть ссылка — тогда беспокоить менеджера
+            # незачем; или выдать не удалось, и тогда без человека нельзя:
+            # он согласился и не получил ни ссылки, ни менеджера.
+            why = direct_invite.consent_left_unserved(
+                branch_config or direct_invite.BranchConfig.from_env(),
+                store=store,
+                thread=thread,
+                account_role=account_role_for(store, inbound),
+            )
+        if why:
+            # Заметку движка и повод карточки складываем: первая объясняет
+            # разговор, второй — почему разговор здесь оказался. Менеджеру,
+            # который видит только карточку, нужны обе половины.
+            note = "; ".join(filter(None, [
+                str(decision.get("knowledge_gap")
+                    or decision.get("reason") or ""),
+                why,
+            ]))
+            result["handoff"] = open_handoff(store, thread, verdict, note)
 
     if verdict == "pause_conversation":
         store.execute(
@@ -636,6 +749,10 @@ def apply(
                 direct_invite.release_inline(
                     store, str(result["invite_inline"]),
                     "ответ не поставлен в очередь", actor=actor)
+            if result.get("demo"):
+                direct_invite.cancel_demo_invite(
+                    store, str(result["demo"]),
+                    "ответ не поставлен в очередь", actor=actor)
             raise
         result["task"] = queued["task"]
         result["sent_text"] = reply_text
@@ -644,15 +761,27 @@ def apply(
             direct_invite.attach_delivery(
                 store, str(result["invite_inline"]), str(queued["task"]),
                 actor=actor)
-    elif result.get("invite_inline"):
-        # Письма не будет вовсе — вернём ссылку отдельному проходу.
-        direct_invite.release_inline(
-            store, str(result["invite_inline"]),
-            "ответ не отправляется на этом ходу", actor=actor)
+        if result.get("demo"):
+            direct_invite.attach_demo_delivery(
+                store, str(result["demo"]), str(queued["task"]), actor=actor)
+    else:
+        # Письма не будет вовсе.
+        if result.get("invite_inline"):
+            # Ссылку вернём отдельному проходу.
+            direct_invite.release_inline(
+                store, str(result["invite_inline"]),
+                "ответ не отправляется на этом ходу", actor=actor)
+        if result.get("demo"):
+            # А демо снимаем совсем: терять нечего, ссылка общая, и следующий
+            # ход соберёт письмо заново.
+            direct_invite.cancel_demo_invite(
+                store, str(result["demo"]),
+                "ответ не отправляется на этом ходу", actor=actor)
+            result["demo"] = ""
 
     store.log(actor, f"autoreply.{verdict}", thread["id"],
               f"задача={result['task'] or '—'} карточка={result['handoff'] or '—'} "
-              f"тест={result['invite'] or '—'}")
+              f"тест={result['invite'] or '—'} демо={result['demo'] or '—'}")
     store.commit()
     return result
 
@@ -912,7 +1041,7 @@ def run(
     # входящее незачем.
     branch_config = direct_invite.BranchConfig.from_env()
 
-    handled = queued = failed = invited = skipped = 0
+    handled = queued = failed = invited = skipped = demoed = deferred = 0
     for inbound in pending(store, limit):
         thread = thread_for(store, inbound)
         reason = skip_reason(store, inbound, thread, settings) if thread else ""
@@ -951,6 +1080,22 @@ def run(
                 queued += 1
             if result.get("invite"):
                 invited += 1
+            if result.get("demo"):
+                demoed += 1
+        except replies.ReplyPending as exc:
+            # Предыдущее письмо со ссылкой ещё лежит планом. Снимать его
+            # нельзя, а вопрос человека терять незачем: оставляем входящее
+            # неразобранным и вернёмся к нему следующим тиком, через двадцать
+            # секунд. Ни карточки, ни отметки о неудаче — ничего не сломалось.
+            #
+            # От вечного цикла страхует предел давности в `skip_reason`: если
+            # письмо почему-то так и не уедет, входящее в конце концов уйдёт
+            # человеку штатной карточкой, а не этой веткой.
+            deferred += 1
+            store.log(actor, "autoreply.deferred", str(inbound["id"]),
+                      str(exc)[:200])
+            store.commit()
+            continue
         except Exception as exc:  # noqa: BLE001 — разбор одного не рушит проход
             failed += 1
             store.log(actor, "autoreply.failed", str(inbound["id"]),
@@ -969,7 +1114,9 @@ def run(
 
     store.log(actor, "autoreply.run", "",
               f"разобрано={handled} поставлено={queued} ошибок={failed} "
-              f"пропущено={skipped} тестов={invited}")
+              f"пропущено={skipped} отложено={deferred} тестов={invited} "
+              f"демо={demoed}")
     store.commit()
     return {"enabled": True, "handled": handled, "queued": queued,
-            "failed": failed, "skipped": skipped, "invited": invited}
+            "failed": failed, "skipped": skipped, "deferred": deferred,
+            "invited": invited, "demo": demoed}

@@ -138,7 +138,9 @@ class AutoReplyTests(unittest.TestCase):
         card = self.store.one("SELECT * FROM handoffs WHERE id = ?",
                               (result["handoff"],))
         self.assertEqual(card["reason"], "knowledge_gap")
-        self.assertEqual(card["note"], "просят СРО-допуск")
+        # Заметка движка плюс повод карточки: менеджеру нужны обе половины.
+        self.assertEqual(card["note"],
+                         "просят СРО-допуск; движок не понял разговор")
 
     # -- чего человеку не уходит --------------------------------------------
 
@@ -382,6 +384,8 @@ class LlmBoundaryTests(unittest.TestCase):
             "confidence": 0.9, "risk_level": "low",
             "next_state": "FAQ automation", "handoff_reason": "",
             "handoff_kind": "none", "matched_direct_invite_sector_id": "",
+            "client_sector_text": "", "canonical_sector_id": "",
+            "sector_confidence": "",
             "knowledge_gap": "", "collected_fields_update": {},
             "coverage_complete": True, "reason": "",
             "turn_items": [{
@@ -704,10 +708,74 @@ class HandoffVocabularyTests(unittest.TestCase):
         )
 
     def test_semantic_handoff_verdicts_are_covered(self):
-        """Оба handoff-вердикта словаря обязаны звать человека."""
+        """Оба handoff-вердикта словаря обязаны быть известны списку.
+
+        Членство в списке само по себе карточку больше не заводит — решает
+        `manager_card_reason`. Но опечатка в имени обязана оставаться заметной,
+        а не превращаться в тихий отказ, поэтому список остаётся.
+        """
         for verdict in ("reply_and_handoff", "handoff"):
             with self.subTest(verdict=verdict):
                 self.assertIn(verdict, autoreply.HANDOFF_DECISIONS)
+
+    def test_the_unclear_verdicts_are_a_subset_of_the_handoff_ones(self):
+        self.assertLessEqual(autoreply.UNCLEAR_DECISIONS,
+                             autoreply.HANDOFF_DECISIONS)
+
+
+class ManagerCardPolicyTests(unittest.TestCase):
+    """Кого именно ждёт живой человек.
+
+    До 06.08 карточку заводил сам вердикт, и в неё одинаково попадали просьба
+    о договоре и согласие на бесплатный тест. Второе человеку не нужно: тест
+    выдаёт автоматика. Из-за этого каждому, чья сфера не попала в allowlist,
+    машина писала «менеджер свяжется с вами» — при том что заявки для
+    менеджера не создавалось вовсе.
+    """
+
+    def reason(self, decision_name: str, **extra):
+        return autoreply.manager_card_reason(decision_name, verdict(
+            decision_name, **extra))
+
+    def test_a_direct_request_for_a_human_opens_a_card(self):
+        self.assertTrue(self.reason("reply_and_handoff",
+                                    handoff_kind="manager_action"))
+
+    def test_consent_to_the_free_test_does_not(self):
+        """Тот самый случай @secivn."""
+        self.assertEqual(self.reason("reply_and_handoff",
+                                     handoff_kind="free_test_access"), "")
+
+    def test_a_handoff_verdict_without_a_kind_and_without_a_claim_does_not(self):
+        self.assertEqual(self.reason("reply_and_handoff",
+                                     handoff_kind="none"), "")
+
+    def test_an_engine_that_did_not_understand_opens_a_card(self):
+        for name in ("knowledge_gap", "hold_for_review"):
+            with self.subTest(verdict=name):
+                self.assertTrue(self.reason(name, handoff_kind="none"))
+
+    def test_a_contract_failure_opens_a_card_even_with_a_test_consent(self):
+        """`hold_for_review` — это «ответа нет вовсе», и он сильнее согласия."""
+        self.assertTrue(self.reason("hold_for_review",
+                                    handoff_kind="free_test_access"))
+
+    def test_a_complaint_from_the_prefilter_still_reaches_a_human(self):
+        """Резкий отказ приходит до модели и `handoff_kind` не несёт вовсе.
+
+        Владелец про жалобы не говорил, но правило «только manager_action»
+        похоронило бы их молча: у префильтра этого ключа нет ни в одном
+        решении.
+        """
+        decision = verdict("manager_handoff", handoff_required=True)
+        decision.pop("handoff_kind")
+        self.assertTrue(autoreply.manager_card_reason("manager_handoff",
+                                                      decision))
+
+    def test_an_ordinary_reply_never_opens_a_card(self):
+        for name in ("auto_reply", "pause_conversation", "ignore", "opt_out"):
+            with self.subTest(verdict=name):
+                self.assertEqual(self.reason(name, handoff_required=True), "")
 
 
 class StaleInboundGateTests(unittest.TestCase):
@@ -1225,9 +1293,280 @@ class FollowUpMessageTests(unittest.TestCase):
             self.second(supersede=True)
         self.assertEqual(self.state(self.first), "planned")
 
+    def test_the_demo_letter_is_never_replaced_but_it_is_not_a_failure(self):
+        """Письмо с демо снимать нельзя, а вопрос человека терять незачем.
+
+        Отдельный тип отказа нужен разбору входящих: с общим `ReplyError` он
+        заводил менеджеру карточку «autoreply_failed» и помечал входящее
+        разобранным — второй вопрос человека пропадал навсегда. С демо-маршрутом
+        это перестало быть редкостью: письмо лежит планом до двух минут, а
+        разбор тикает раз в двадцать секунд.
+        """
+        self.store.execute(
+            "INSERT INTO demo_invites(id, contact_id, thread_id, account_id, "
+            "inbound_id, source_channel, canonical_sector_id, sector_status, "
+            "status, task_id, created_at, updated_at) "
+            "VALUES('dm1',?,?,821,'5001','private_dm','','unknown','queued',"
+            "?,?,?)",
+            (self.contact_id, self.thread_id, self.first, now(), now()))
+        self.store.commit()
+        self.add_inbound(5002, "а сколько это стоит?")
+        with self.assertRaises(replies.ReplyPending):
+            self.second(supersede=True)
+        self.assertEqual(self.state(self.first), "planned")
+
+    def test_a_plain_draft_is_still_an_ordinary_refusal(self):
+        """Отложить можно только письмо со ссылкой, а не любой отказ.
+
+        Иначе `ReplyPending` стал бы общим ответом на всё, и настоящий затор —
+        задача, ушедшая в Radar, — тоже перестал бы доходить до человека.
+        """
+        self.store.execute(
+            "UPDATE tasks SET state = 'queued' WHERE id = ?", (self.first,))
+        self.store.commit()
+        self.add_inbound(5002, "ещё уточнение")
+        with self.assertRaises(replies.ReplyError) as caught:
+            self.second(supersede=True)
+        self.assertNotIsInstance(caught.exception, replies.ReplyPending)
+
     def test_manual_replies_still_refuse(self):
         """У человека отказ информативен: он должен знать, что ответ уже ждёт."""
         self.add_inbound(5002, "ещё уточнение")
         with self.assertRaises(replies.ReplyError):
             self.second()
         self.assertEqual(self.state(self.first), "planned")
+
+
+class DemoRouteTests(unittest.TestCase):
+    """Сфера подтверждена, готовой тестовой группы под неё нет.
+
+    Человек уходит в общий демо-бот, и карточка менеджеру в этой ветке не
+    заводится намеренно: разговор продолжается внутри бота, где он сам решает,
+    нужны ли ему примеры под своё направление и живой человек.
+
+    Поэтому здесь проверяется в первую очередь, что ветка НЕ срабатывает там,
+    где карточка ещё нужна: при неточном сопоставлении, при старом движке без
+    новых полей и на ходу, где решено промолчать.
+    """
+
+    BRANCH = OneLetterTests.BRANCH
+    CATALOG = {
+        "schema_version": 2,
+        "demo_bot_link": "https://t.me/tg_radar_robot?start=outreach",
+        "sectors": [
+            {"canonical_sector_id": "auto_import_dealers",
+             "sector_name": "Авто из-за границы", "status": "ready"},
+            {"canonical_sector_id": "crm_1c",
+             "sector_name": "CRM, 1С и автоматизация продаж",
+             "status": "manual"},
+        ],
+    }
+
+    def setUp(self):
+        from bridge49 import direct_invite
+        self.di = direct_invite
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        branch_path = tmp / "branch.json"
+        branch_path.write_text(json.dumps(self.BRANCH), encoding="utf-8")
+        catalog_path = tmp / "catalog.json"
+        catalog_path.write_text(json.dumps(self.CATALOG, ensure_ascii=False),
+                                encoding="utf-8")
+        self.branch = direct_invite.BranchConfig.from_path(
+            branch_path).with_sector_catalog(catalog_path)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        contact = entities.add_contact(
+            self.store, username="someone", segment="inbound", actor="test")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (new_id("thread"), contact["id"], now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(5001,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            ("Да, интересно. Интегрируем Битрикс.", now(), now()))
+        self.store.commit()
+        self.inbound = dict(self.store.one("SELECT * FROM inbound WHERE id=5001"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def consent(self, **extra):
+        payload = {
+            "reply_text": "Принято, покажу как это работает.",
+            "handoff_kind": "free_test_access",
+            "matched_direct_invite_sector_id": "",
+            "client_sector_text": "", "canonical_sector_id": "",
+            "sector_confidence": "",
+            "canonical_sector_id": "crm_1c",
+            "sector_confidence": "exact",
+        }
+        payload.update(extra)
+        return verdict("reply_and_handoff", **payload)
+
+    def apply(self, decision=None):
+        return autoreply.apply(self.store, self.inbound,
+                               decision or self.consent(),
+                               branch_config=self.branch)
+
+    def letters(self):
+        return [json.loads(r["params"])["text"] for r in self.store.query(
+            "SELECT params FROM tasks ORDER BY created_at, id")]
+
+    def reset(self):
+        """Вернуть диалог в исходное для следующего прогона подтеста.
+
+        Задачи чистим тоже: с тех пор как маршрут стал доходить до письма,
+        второй прогон упирается в «этому собеседнику уже поставлен ответ» и
+        падает ошибкой вместо проверки.
+        """
+        for table in ("demo_invites", "handoffs", "tasks"):
+            self.store.execute(f"DELETE FROM {table}")
+        self.store.commit()
+
+    def test_one_letter_carries_the_demo_link_and_no_card_is_opened(self):
+        result = self.apply()
+        letters = self.letters()
+        self.assertEqual(len(letters), 1, f"писем должно быть одно: {letters}")
+        self.assertIn("t.me/tg_radar_robot", letters[0])
+        self.assertTrue(result["demo"])
+        self.assertEqual(result["handoff"], "", "карточка в этой ветке лишняя")
+        self.assertEqual(result["invite"], "")
+
+    def test_the_letter_knows_its_task(self):
+        result = self.apply()
+        row = self.store.one("SELECT status, task_id FROM demo_invites")
+        self.assertEqual(row["status"], self.di.DEMO_STATUS_QUEUED)
+        self.assertEqual(row["task_id"], result["task"])
+
+    def test_a_ready_sector_still_goes_to_startbot(self):
+        result = self.apply(self.consent(
+            matched_direct_invite_sector_id="auto_import_dealers",
+            canonical_sector_id="auto_import_dealers"))
+        self.assertTrue(result["invite"])
+        self.assertEqual(result["demo"], "")
+        self.assertEqual(
+            self.store.one("SELECT COUNT(*) AS n FROM demo_invites")["n"], 0)
+
+    def test_without_an_exact_match_the_person_still_gets_the_demo(self):
+        """«Скорее всего» — это «не знаем», а не «зови менеджера».
+
+        Сфера решает ровно один вопрос: не положен ли человеку настоящий
+        доступ. На него `likely` не отвечает, поэтому человек идёт общим
+        маршрутом. Письмо демо-бота сферу не называет, так что ответить
+        невпопад им нельзя.
+        """
+        for confidence in ("likely", "ambiguous", "none", ""):
+            with self.subTest(confidence=confidence):
+                self.reset()
+                result = self.apply(self.consent(sector_confidence=confidence))
+                self.assertTrue(result["demo"], "ссылка на демо обязана уйти")
+                self.assertEqual(result["handoff"], "",
+                                 "менеджер здесь ни при чём")
+                self.assertIn("t.me/tg_radar_robot", " ".join(self.letters()))
+
+    def test_an_engine_without_the_new_fields_still_reaches_the_demo(self):
+        """Старая обёртка полей сферы не знает — человек не виноват.
+
+        Раньше это состояние читалось как «маршрут выключен» и давало
+        карточку. Теперь неизвестная сфера ведёт туда же, куда и всякая
+        неопознанная: в общий демо-бот.
+        """
+        decision = self.consent()
+        decision.pop("canonical_sector_id")
+        decision.pop("sector_confidence")
+        result = self.apply(decision)
+        self.assertTrue(result["demo"])
+        self.assertEqual(result["handoff"], "")
+        self.assertIn("t.me/tg_radar_robot", " ".join(self.letters()))
+
+    def test_a_sector_unknown_to_the_catalog_gets_the_demo(self):
+        """Тот самый случай @secivn: сферы нет в словаре, ссылка всё равно есть."""
+        result = self.apply(self.consent(canonical_sector_id="китобойный промысел"))
+        self.assertTrue(result["demo"])
+        self.assertEqual(result["handoff"], "")
+        row = self.store.one("SELECT canonical_sector_id, sector_status "
+                             "  FROM demo_invites")
+        self.assertEqual(row["canonical_sector_id"], "")
+        self.assertEqual(row["sector_status"], self.di.SECTOR_STATUS_UNKNOWN)
+
+    def test_a_silent_turn_never_speaks(self):
+        """Движок решил промолчать. Заговорить здесь значит спорить с ним."""
+        result = self.apply(verdict(
+            "hold_for_review", reply_text="",
+            handoff_kind="free_test_access",
+            matched_direct_invite_sector_id="",
+            canonical_sector_id="crm_1c", sector_confidence="exact"))
+        self.assertEqual(result["demo"], "")
+        self.assertEqual(self.letters(), [])
+        self.assertTrue(result["handoff"])
+
+    def test_without_a_catalog_the_route_is_off(self):
+        """Выдать было нечем — тогда человека обязан подхватить менеджер.
+
+        Это единственный случай, когда согласие на тест всё-таки заводит
+        карточку: не потому что человеку нужен живой, а потому что автоматика
+        недоступна и молчание оставило бы его вообще ни с чем.
+        """
+        bare = self.di.BranchConfig.from_path(
+            Path(self.tmp.name) / "branch.json")
+        result = autoreply.apply(self.store, self.inbound, self.consent(),
+                                 branch_config=bare)
+        self.assertEqual(result["demo"], "")
+        self.assertTrue(result["handoff"])
+
+    def test_a_request_for_a_human_still_gets_a_card_and_no_demo(self):
+        """Демо-маршрут не должен подменять собой просьбу о менеджере."""
+        result = self.apply(self.consent(handoff_kind="manager_action"))
+        self.assertEqual(result["demo"], "")
+        self.assertTrue(result["handoff"])
+
+    def test_a_ready_sector_the_router_refused_reaches_a_human(self):
+        """Готовой сфере демо не положено — значит остаётся живой человек.
+
+        Сочетание достижимо штатно: `matched_direct_invite_sector_id` и
+        `canonical_sector_id` — разные оси, и промпт прямо велит оставлять
+        первый пустым, когда подтверждение слабое. Тогда выдачи нет, демо
+        запрещено готовым статусом, и без карточки человек проваливается
+        в тишину.
+        """
+        result = self.apply(self.consent(
+            matched_direct_invite_sector_id="",
+            canonical_sector_id="auto_import_dealers",
+            sector_confidence="exact"))
+        self.assertEqual(result["invite"], "")
+        self.assertEqual(result["demo"], "")
+        self.assertTrue(result["handoff"], "человек остался бы ни с чем")
+
+    def test_a_bare_handoff_without_text_still_reaches_a_human(self):
+        """Голый handoff: текста нет, значит и демо-письму не во что уехать."""
+        result = self.apply(verdict(
+            "manager_handoff", reply_text="",
+            handoff_kind="free_test_access",
+            handoff_required=True,
+            matched_direct_invite_sector_id="",
+            canonical_sector_id="", sector_confidence=""))
+        self.assertEqual(result["demo"], "")
+        self.assertEqual(self.letters(), [])
+        self.assertTrue(result["handoff"])
+
+    def test_a_second_consent_does_not_open_a_card(self):
+        """Ссылка уже уехала: беспокоить менеджера незачем.
+
+        Раньше повторный ход просто не попадал в демо-ветку и падал в общий
+        `else` с карточкой — то есть человек, у которого ссылка уже есть,
+        создавал менеджеру работу на пустом месте.
+        """
+        self.assertTrue(self.apply()["demo"])
+        # Убираем только письмо, чтобы второй ход не упёрся в «ответ уже
+        # поставлен». Строка `demo_invites` остаётся, как и в жизни.
+        self.store.execute("UPDATE demo_invites SET task_id = NULL")
+        self.store.execute("DELETE FROM tasks")
+        self.store.commit()
+        again = self.apply()
+        self.assertEqual(again["demo"], "")
+        self.assertEqual(again["handoff"], "")

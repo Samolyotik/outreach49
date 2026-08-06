@@ -43,7 +43,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -54,6 +54,38 @@ from .store import Store, new_id, now
 #: Где лежит описание разрешённых сфер. Имя переменной то же, что в прежнем
 #: контуре, — файл переиспользуется как есть, без переписывания.
 BRANCH_CONFIG_ENV = "OUTREACH_STARTBOT_DIRECT_INVITE_CONFIG"
+
+#: Где лежит канонический словарь сфер. Отдельный файл, а не новые ключи в
+#: конфиге выше, по одной причине: тот файл общий с прежним контуром, а
+#: `from_env` глотает любую ошибку чтения и тихо возвращает «выключено». То
+#: есть неудачная правка общего файла даёт не отказ, а молчаливую смерть
+#: автовыдачи без следа в журнале. Здесь же худший случай — пустой словарь.
+SECTOR_CATALOG_ENV = "OUTREACH_SECTOR_CATALOG"
+
+#: Статусы строки словаря. На маршрут сейчас влияет только `ready`: сфера с
+#: готовой тестовой группой получает прямой доступ, все остальные — демо-бота.
+#: Различие `manual` и `out_of_scope` словарь помнит, но ни текст, ни маршрут
+#: оно пока не меняет: человек сам запрашивает менеджера уже внутри демо-бота.
+SECTOR_STATUS_READY = "ready"
+SECTOR_STATUS_MANUAL = "manual"
+SECTOR_STATUS_OUT_OF_SCOPE = "out_of_scope"
+SECTOR_STATUSES = (
+    SECTOR_STATUS_READY,
+    SECTOR_STATUS_MANUAL,
+    SECTOR_STATUS_OUT_OF_SCOPE,
+)
+
+#: Сферы нет в словаре — или человек её вовсе не назвал.
+#:
+#: Это НЕ статус строки словаря, и в `SECTOR_STATUSES` его быть не должно:
+#: строка с таким статусом не прочиталась бы. Маркер живёт только в колонке
+#: `demo_invites.sector_status`, чтобы в отчётах было видно разницу между
+#: «сфера известна, готовой группы нет» и «сферу не опознали вовсе».
+#:
+#: Пустая строка вместо маркера тоже прошла бы: `NOT NULL` в SQLite её
+#: допускает, а `CHECK` на этой колонке нет. Но пустота в отчёте неотличима от
+#: потерянного значения, а разница здесь как раз и есть предмет наблюдения.
+SECTOR_STATUS_UNKNOWN = "unknown"
 API_BASE_URL_ENV = "OUTREACH_STARTBOT_API_BASE_URL"
 API_TOKEN_ENV = "OUTREACH_STARTBOT_API_SERVICE_TOKEN"
 API_TIMEOUT_ENV = "OUTREACH_STARTBOT_TIMEOUT_SECONDS"
@@ -63,8 +95,23 @@ API_TIMEOUT_ENV = "OUTREACH_STARTBOT_TIMEOUT_SECONDS"
 INVITE_CAMPAIGN_ID = "direct_invites"
 INVITE_CAMPAIGN_NAME = "Автовыдача бесплатного теста"
 
+#: Служебная кампания демо-маршрута. Отдельная от выдачи ссылок StartBot:
+#: у неё другой смысл в отчётах, а лимиты живут на кампании.
+DEMO_CAMPAIGN_ID = "demo_invites"
+DEMO_CAMPAIGN_NAME = "Демо-бот для сфер без готового теста"
+
+#: Состояния демо-заявки. Своих сетевых вызовов у неё нет, поэтому и состояний
+#: втрое меньше, чем у выдачи StartBot: письмо ставится в очередь сразу.
+DEMO_STATUS_QUEUED = "queued"
+DEMO_STATUS_DELIVERED = "delivered"
+DEMO_STATUS_CANCELLED = "cancelled"
+
 #: Тот самый вердикт движка, ради которого всё и затевалось.
 CONSENT_HANDOFF_KIND = "free_test_access"
+
+#: Человек просит живого: менеджера, созвон, счёт, договор, свои условия.
+#: Единственный вид handoff, который движок вправе адресовать человеку.
+MANAGER_HANDOFF_KIND = "manager_action"
 
 #: Состояния заявки. Имена сохранены от прежнего контура, чтобы историю двух
 #: баз можно было сравнивать глазами без словаря переводов.
@@ -109,6 +156,117 @@ class SectorProfile:
 
 
 @dataclass(frozen=True)
+class SectorRow:
+    """Строка канонического словаря сфер.
+
+    Маршрута она не содержит: `sector_id` и `test_group_profile_id` живут
+    только в конфиге StartBot, где их и валидируют. Дублировать их здесь
+    значило бы завести второй источник правды о том, в какую тестовую группу
+    ведёт сфера, — а расхождение имён видно только по пяти неудачным выпускам.
+    """
+
+    canonical_sector_id: str
+    sector_name: str
+    status: str
+    note: str = ""
+    description: str = ""
+    subsectors: tuple[str, ...] = ()
+    synonyms: tuple[str, ...] = ()
+    self_names: tuple[str, ...] = ()
+    service_markers: tuple[str, ...] = ()
+    boundaries: tuple[tuple[str, str], ...] = ()
+
+    def for_prompt(self) -> dict[str, Any]:
+        """Проекция для модели: без заметок и служебных полей."""
+        payload: dict[str, Any] = {
+            "canonical_sector_id": self.canonical_sector_id,
+            "sector_name": self.sector_name,
+            "free_test_group_ready": self.status == SECTOR_STATUS_READY,
+        }
+        if self.description:
+            payload["description"] = self.description
+        for key, values in (
+            ("subsectors", self.subsectors),
+            ("synonyms", self.synonyms),
+            ("self_names", self.self_names),
+            ("service_markers", self.service_markers),
+        ):
+            if values:
+                payload[key] = list(values)
+        if self.boundaries:
+            payload["boundaries"] = [
+                {"vs": vs, "rule": rule} for vs, rule in self.boundaries
+            ]
+        return payload
+
+
+def _text_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        str(item).strip() for item in value if str(item or "").strip()
+    )
+
+
+def load_sector_catalog(
+    path: str | Path,
+) -> tuple[dict[str, SectorRow], str]:
+    """Прочитать словарь сфер. Возвращает строки и ссылку на демо-бота.
+
+    Бросает только на явно испорченном файле; вызывающий обязан это поймать и
+    продолжить без словаря, потому что автовыдача шести сфер от него не
+    зависит и падать вместе с ним не должна.
+    """
+    normalized = Path(path).expanduser().resolve()
+    raw = json.loads(normalized.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise DirectInviteError("словарь сфер должен быть JSON-объектом")
+    if int(raw.get("schema_version") or 0) != 2:
+        raise DirectInviteError("неподдерживаемая schema_version словаря сфер")
+
+    demo_link = str(raw.get("demo_bot_link") or "").strip()
+    if demo_link and not demo_link.startswith("https://t.me/"):
+        raise DirectInviteError("ссылка на демо-бота должна вести на t.me")
+
+    rows: dict[str, SectorRow] = {}
+    for item in raw.get("sectors") or []:
+        if not isinstance(item, dict):
+            raise DirectInviteError("строка словаря должна быть объектом")
+        canonical = str(item.get("canonical_sector_id") or "").strip()
+        name = str(item.get("sector_name") or "").strip()
+        status = str(item.get("status") or "").strip()
+        if not canonical or not name:
+            raise DirectInviteError(f"неполная строка словаря: {canonical or '?'}")
+        if status not in SECTOR_STATUSES:
+            raise DirectInviteError(
+                f"у сферы {canonical} неизвестный статус {status!r}"
+            )
+        if canonical in rows:
+            raise DirectInviteError(f"сфера {canonical} описана дважды")
+        boundaries: list[tuple[str, str]] = []
+        for edge in item.get("boundaries") or []:
+            if not isinstance(edge, dict):
+                raise DirectInviteError(f"разграничитель сферы {canonical} кривой")
+            vs = str(edge.get("vs") or "").strip()
+            rule = str(edge.get("rule") or "").strip()
+            if vs and rule:
+                boundaries.append((vs, rule))
+        rows[canonical] = SectorRow(
+            canonical_sector_id=canonical,
+            sector_name=name,
+            status=status,
+            note=str(item.get("note") or "").strip(),
+            description=str(item.get("description") or "").strip(),
+            subsectors=_text_tuple(item.get("subsectors")),
+            synonyms=_text_tuple(item.get("synonyms")),
+            self_names=_text_tuple(item.get("self_names")),
+            service_markers=_text_tuple(item.get("service_markers")),
+            boundaries=tuple(boundaries),
+        )
+    return rows, demo_link
+
+
+@dataclass(frozen=True)
 class BranchConfig:
     """Точный список сфер, которым доступ выдаётся автоматически."""
 
@@ -118,6 +276,13 @@ class BranchConfig:
     validity_days: int = 7
     max_attempts: int = 5
     source_path: str = ""
+    # Словарь сфер приезжает отдельным файлом и только добавляет: без него
+    # всё поведение ровно сегодняшнее. Поля обязаны идти последними и с
+    # дефолтами — `disabled()` и тесты конструируют этот класс позиционно.
+    sector_rows: Mapping[str, SectorRow] = field(default_factory=dict)
+    demo_bot_link: str = ""
+    catalog_path: str = ""
+    catalog_warnings: tuple[str, ...] = ()
 
     @classmethod
     def disabled(cls, source_path: str = "") -> "BranchConfig":
@@ -127,13 +292,111 @@ class BranchConfig:
     def from_env(cls) -> "BranchConfig":
         path = os.getenv(BRANCH_CONFIG_ENV, "").strip()
         if not path:
-            return cls.disabled()
+            base = cls.disabled()
+        else:
+            try:
+                base = cls.from_path(path)
+            except (OSError, ValueError, DirectInviteError):
+                # Кривой или недоступный конфиг — это «выключено», а не падение
+                # разбора входящих. Разговор пойдёт ручным путём.
+                base = cls.disabled(path)
+        return base.with_sector_catalog(os.getenv(SECTOR_CATALOG_ENV, "").strip())
+
+    def with_sector_catalog(self, path: str | Path | None) -> "BranchConfig":
+        """Присоединить словарь сфер. Ошибка словаря ветку не выключает.
+
+        Здесь принципиально другое поведение, чем у конфига маршрутов выше.
+        Тот конфиг решает, кому вообще выдавать доступ, и при сомнении обязан
+        молчать. Словарь же только описывает сферы: если он не прочитался,
+        правильный ответ — работать как вчера и сказать об этом в статусе, а
+        не отнимать доступ у шести боевых сфер.
+        """
+        normalized = str(path or "").strip()
+        if not normalized:
+            return self
         try:
-            return cls.from_path(path)
-        except (OSError, ValueError, DirectInviteError):
-            # Кривой или недоступный конфиг — это «выключено», а не падение
-            # разбора входящих. Разговор пойдёт ручным путём.
-            return cls.disabled(path)
+            rows, demo_link = load_sector_catalog(normalized)
+        except (OSError, ValueError, DirectInviteError) as exc:
+            return replace(
+                self, catalog_path=normalized, catalog_warnings=(str(exc),)
+            )
+        return replace(
+            self,
+            sector_rows=rows,
+            demo_bot_link=demo_link,
+            catalog_path=normalized,
+            catalog_warnings=tuple(
+                self._catalog_disagreements(rows)
+            ),
+        )
+
+    def _catalog_disagreements(
+        self, rows: Mapping[str, SectorRow]
+    ) -> list[str]:
+        """Расхождения словаря и боевого конфига — заметка, а не запрет.
+
+        Единственный источник правды о том, какой сфере положен прямой
+        доступ, — `active_sector_ids`. Словарь его не сужает: иначе модель
+        по-прежнему считала бы сферу автоматической и обещала ссылку, которую
+        выпуск затем молча не выдаст.
+        """
+        notes: list[str] = []
+        ready = {
+            key for key, row in rows.items()
+            if row.status == SECTOR_STATUS_READY
+        }
+        for missing in sorted(self.active_sector_ids - set(rows)):
+            notes.append(f"сфера {missing} выдаётся, но в словаре её нет")
+        for stale in sorted((set(rows) & self.active_sector_ids) - ready):
+            notes.append(
+                f"сфера {stale} выдаётся, а в словаре помечена как "
+                f"{rows[stale].status}"
+            )
+        for orphan in sorted(ready - self.active_sector_ids):
+            notes.append(
+                f"сфера {orphan} помечена готовой, но доступ по ней не выдаётся"
+            )
+        return notes
+
+    def sector_status(self, canonical_sector_id: str) -> str:
+        row = self.sector_rows.get(str(canonical_sector_id or "").strip())
+        return row.status if row is not None else ""
+
+    def sector_row(self, canonical_sector_id: str) -> SectorRow | None:
+        return self.sector_rows.get(str(canonical_sector_id or "").strip())
+
+    def matching_catalog(self) -> list[dict[str, Any]]:
+        """Словарь для сопоставления в промпте. Не allowlist выдачи.
+
+        Отдельно от `active_sector_catalog`: тот одновременно и текст промпта,
+        и список разрешённых id, и источник enum обёртки. Обогащать его
+        значило бы менять поведение шести боевых сфер.
+        """
+        return [
+            row.for_prompt()
+            for row in sorted(
+                self.sector_rows.values(),
+                key=lambda item: (
+                    item.status != SECTOR_STATUS_READY,
+                    item.canonical_sector_id,
+                ),
+            )
+        ]
+
+    def demo_route_ready(self) -> bool:
+        """Можно ли вести человека в демо-бота.
+
+        `enabled` здесь обязателен, и это не формальность. Мастер-гейт — это
+        единственная ручка «автоматика ничего не делает сама»; без него флаг
+        выключал только выдачу StartBot, а демо продолжало уходить. Хуже того,
+        `from_env` вешает словарь сфер даже на конфиг, который не прочитался, —
+        то есть неудачная правка общего файла не останавливала маршрут, а
+        молча оставляла его работать. И CLI при этом печатал «ветка выключена
+        — ссылки не выдаются», что переставало быть правдой.
+        """
+        return (self.enabled
+                and bool(self.demo_bot_link)
+                and bool(self.sector_rows))
 
     @classmethod
     def from_path(cls, path: str | Path) -> "BranchConfig":
@@ -250,6 +513,14 @@ class BranchConfig:
             "ссылка живёт, дней": self.validity_days,
             "попыток выпуска": self.max_attempts,
             "конфиг": self.source_path or "—",
+            "словарь сфер": self.catalog_path or "—",
+            "строк в словаре": len(self.sector_rows),
+            "из них с готовым тестом": sum(
+                1 for row in self.sector_rows.values()
+                if row.status == SECTOR_STATUS_READY
+            ),
+            "демо-бот": self.demo_bot_link or "—",
+            "расхождения словаря": list(self.catalog_warnings) or ["нет"],
         }
 
 
@@ -494,6 +765,106 @@ def render_invite_message(
     return "\n\n".join(blocks)
 
 
+#: Текст демо-маршрута. Один смысл на все сферы — и в этом весь смысл: письмо
+#: ничего не обещает про конкретное направление, поэтому его не нужно
+#: переписывать под каждую новую сферу и невозможно случайно соврать.
+#:
+#: Текст выдачи StartBot переиспользовать нельзя, хотя соблазн есть. Он
+#: утверждает три вещи, ложные для этой ссылки: что тест открыт «по
+#: направлению «{sector}»», что ссылка одноразовая и закрепится за первым
+#: аккаунтом, и что внутри ждёт живая тестовая группа. Здесь ссылка общая и
+#: постоянная, а группы под сферу человека может не быть вовсе.
+_DEMO_OPENINGS = (
+    "Отлично, тогда предлагаю посмотреть, как {brand} работает на практике, "
+    "в нашем демо-боте.",
+    "Тогда предлагаю посмотреть {brand} в деле: у нас есть демо-бот.",
+    "Хорошо, тогда проще показать. У нас для этого есть демо-бот {brand}.",
+    "Отлично. Показать, как это устроено, проще всего в нашем демо-боте "
+    "{brand}.",
+)
+_DEMO_INSIDE = (
+    "В нём сервис в реальном времени находит сообщения людей с потенциальным "
+    "спросом в разных сферах.",
+    "Там видно, как сервис прямо сейчас находит в открытых чатах сообщения "
+    "людей с потенциальным спросом по разным направлениям.",
+    "Внутри он в реальном времени собирает сообщения людей, у которых виден "
+    "потенциальный спрос, по нескольким направлениям сразу.",
+    "В нём в реальном времени видно сами сообщения с потенциальным спросом, "
+    "которые сервис находит в открытых чатах по разным сферам.",
+)
+_DEMO_MANAGER = (
+    "Там же можно задать вопросы менеджеру и запросить примеры сообщений "
+    "именно для вашей сферы.",
+    "Там же есть менеджер: ему можно задать вопросы и попросить примеры "
+    "сообщений под вашу сферу.",
+    "Если понадобятся примеры именно по вашему направлению, их можно "
+    "запросить там же у менеджера.",
+    "Вопросы и примеры под вашу сферу можно запросить прямо там, у менеджера.",
+)
+_DEMO_LINK_LINES = (
+    "Посмотреть, как это работает: [{link_text}]({link})",
+    "Вот он: [{link_text}]({link})",
+    "Демо-бот здесь: [{link_text}]({link})",
+    "Заглянуть можно тут: [{link_text}]({link})",
+)
+
+#: Слова, которых в этом письме быть не должно: они относятся к персональной
+#: ссылке StartBot и здесь были бы обещанием, которого никто не выполнит.
+_DEMO_FORBIDDEN = (
+    "одноразов", "один раз", "закрепится", "персональн", "тестовая группа",
+)
+
+
+def render_demo_message(deep_link: str, *, seed: str) -> str:
+    """Письмо со ссылкой на демо-бота.
+
+    Сферу оно не называет намеренно. Демо-бот один на всех, и назвать в нём
+    направление человека значило бы пообещать готовую группу под это
+    направление — ровно то, чего у сфер без тестовой группы нет.
+
+    Сид обязателен и должен быть привязан к получателю. У выдачи StartBot
+    роль сида играет сама ссылка: она у каждого своя, поэтому и текст выходит
+    свой. Здесь ссылка общая и постоянная, так что сид по ссылке дал бы всем
+    один и тот же текст с шести аккаунтов — заметный шаблон. При этом
+    повторный вызов с тем же сидом обязан давать тот же текст: письмо могут
+    собрать заново при повторе, и человек не должен увидеть два разных.
+    """
+    link = str(deep_link or "").strip()
+    if not link.startswith("https://t.me/"):
+        raise DirectInviteError("нужна ссылка на демо-бота в t.me")
+    # Видимый текст — @имя бота, а адрес прячется в разметке. Проверено живой
+    # отправкой: Telethon по умолчанию разбирает markdown, и ссылка уезжает
+    # как MessageEntityTextUrl.
+    handle = link.split("?", 1)[0].rsplit("/", 1)[-1].strip()
+    if not handle:
+        raise DirectInviteError("в ссылке на демо-бота нет имени бота")
+    marker = str(seed or "").strip()
+    if not marker:
+        raise DirectInviteError("нужен сид получателя для текста демо-письма")
+
+    digest = hashlib.sha256(marker.encode("utf-8")).digest()
+    text = "\n\n".join((
+        " ".join((
+            _DEMO_OPENINGS[digest[0] % len(_DEMO_OPENINGS)].format(
+                brand="ТГ РАДАР"),
+            _DEMO_INSIDE[digest[1] % len(_DEMO_INSIDE)],
+        )),
+        _DEMO_MANAGER[digest[2] % len(_DEMO_MANAGER)],
+        _DEMO_LINK_LINES[digest[3] % len(_DEMO_LINK_LINES)].format(
+            link_text=f"@{handle}", link=link),
+    ))
+
+    lowered = text.lower()
+    for word in _DEMO_FORBIDDEN:
+        if word in lowered:
+            raise DirectInviteError(f"в письме демо-бота лишнее слово: {word}")
+    if text.count(link) != 1:
+        raise DirectInviteError("ссылка в письме демо-бота должна быть одна")
+    if "—" in text:
+        raise DirectInviteError("длинное тире в письме демо-бота запрещено")
+    return text
+
+
 # ---------------------------------------------------------------------------
 # согласие
 # ---------------------------------------------------------------------------
@@ -528,6 +899,99 @@ def consent_from_decision(decision: Mapping[str, Any]) -> bool:
     """Согласие ли это на бесплатный тест."""
     kind = str(decision.get("handoff_kind") or "").strip().lower()
     return kind == CONSENT_HANDOFF_KIND
+
+
+def consent_left_unserved(
+    config: BranchConfig,
+    *,
+    store: Store,
+    thread: Mapping[str, Any],
+    account_role: str,
+) -> str:
+    """Почему согласие осталось без выдачи. Пусто — выдавать было и не нужно.
+
+    Зовётся только когда человек согласился на тест, а автоматика не выдала ни
+    ссылки, ни демо. Различие здесь дороже, чем кажется: «не смогли» и «уже
+    незачем» выглядят одинаково — оба возвращают `None`, — но первое обязано
+    дойти до менеджера, а второе не должно его беспокоить.
+
+    Умолчание здесь — «не смогли», и это принципиально. Первая версия перечисляла
+    известные причины отказа и в конце возвращала пустоту, то есть всякая
+    непредусмотренная причина читалась как «человек обслужен». Причин же у
+    `record_demo_invite` семь, а знала функция три: согласие по сфере с готовой
+    группой, которой отказал `record_consent`, проваливалось в тишину — ни
+    ссылки, ни демо, ни менеджера. До правки 06.08 такой ход заводил карточку.
+
+    «Уже незачем» ровно одно: человеку есть что открыть. Персональная ссылка
+    выдана раньше либо демо-письмо уже собрано и не отменено.
+    """
+    contact_id = str(thread.get("contact_id") or "").strip()
+    if not contact_id:
+        return "у собеседника не заведён контакт"
+    if demo_invite_blocked_by_personal_link(store, contact_id):
+        return ""
+    existing = store.one(
+        "SELECT status FROM demo_invites WHERE contact_id = ?", (contact_id,)
+    )
+    if existing is not None and str(existing["status"]) != DEMO_STATUS_CANCELLED:
+        return ""
+    if not config.enabled:
+        return "автовыдача выключена мастер-флагом"
+    if not config.demo_route_ready():
+        return "демо-маршрут недоступен: нет словаря сфер или ссылки на бота"
+    if source_channel_for_role(account_role) not in (
+        "channel_dm", "private_dm", "public_chat"
+    ):
+        return f"у роли {account_role or '—'} нет канала для выдачи"
+    return "согласие есть, а выдать не удалось"
+
+
+def specialization_conflict(
+    config: BranchConfig,
+    *,
+    decision: Mapping[str, Any],
+    inbound: Mapping[str, Any],
+) -> str:
+    """Причина, по которой ход обязан достаться человеку. Пусто — конфликта нет.
+
+    Тот же детерминированный гейт, что отбивает выдачу внутри `record_consent`,
+    но видимый вызывающему. Без него отказ гейта неотличим от «сфера не подошла»
+    и уводит человека в общее демо — а гейт срабатывает ровно тогда, когда
+    сфера-то как раз известна и у неё есть готовая группа, просто не та, что
+    выбрала модель. Демо здесь было бы шагом назад, и выбирать между двумя
+    группами должен человек.
+    """
+    try:
+        profile = config.route_for(sector_from_decision(decision))
+    except BranchInactive:
+        return ""
+    return contradicts_named_specialization(
+        inbound.get("text"), profile.outreach_sector_id
+    )
+
+
+#: Уверенность сопоставления, при которой демо-маршрут вообще рассматривается.
+SECTOR_CONFIDENCE_EXACT = "exact"
+
+
+def canonical_sector_from_decision(decision: Mapping[str, Any]) -> str:
+    """Опознанная сфера. Пусто — сферу не опознали, и это нормальный случай.
+
+    Требуем точного сопоставления, но смысл требования не тот, что раньше.
+    Сфера здесь решает ровно один вопрос: не положен ли человеку настоящий
+    доступ вместо демо. На этот вопрос «скорее всего» не отвечает, поэтому
+    `likely` и `ambiguous` читаются как «не знаем» — и человек идёт общим
+    маршрутом в демо-бота, а не к менеджеру.
+
+    Раньше пустота отсюда закрывала демо-маршрут целиком. Это было ошибкой:
+    письмо демо-бота сферу не называет (`render_demo_message`), поэтому
+    «ответить невпопад» им невозможно — оно одинаково для всех.
+    """
+    if str(decision.get("sector_confidence") or "").strip().lower() != (
+        SECTOR_CONFIDENCE_EXACT
+    ):
+        return ""
+    return str(decision.get("canonical_sector_id") or "").strip()
 
 
 #: Явно названная специализация и общая сфера, в которую её нельзя свести.
@@ -643,6 +1107,151 @@ def record_consent(
     store.log("autoreply", "invite.consent", request_id,
               f"сфера={profile.sector_name} канал={channel}")
     return dict(store.one("SELECT * FROM direct_invites WHERE id = ?", (invite_id,)))
+
+
+def demo_invite_blocked_by_personal_link(store: Store, contact_id: str) -> bool:
+    """Персональная ссылка уже выдана — демо-бота поверх неё не шлём.
+
+    Запрос по контакту, а не по треду: у человека уже есть настоящий доступ, и
+    письмо про общий демо-бот выглядело бы шагом назад.
+    """
+    row = store.one(
+        "SELECT id FROM direct_invites WHERE contact_id = ? "
+        "AND status IN (?, ?, ?)",
+        (str(contact_id), STATUS_AGREED, STATUS_CREATED, STATUS_DELIVERED),
+    )
+    return row is not None
+
+
+def record_demo_invite(
+    store: Store,
+    *,
+    config: BranchConfig,
+    thread: Mapping[str, Any],
+    inbound: Mapping[str, Any],
+    account_role: str,
+    canonical_sector_id: str,
+    at: str | None = None,
+    actor: str = "autoreply",
+) -> dict[str, Any] | None:
+    """Собрать письмо со ссылкой на демо-бота. None — маршрут не подходит.
+
+    Задачу здесь не ставим, а возвращаем текст: письмо должно уехать тем же
+    одним сообщением, что и ответ движка. Отдельная задача второго письма не
+    даёт — она либо отвергается («этому собеседнику уже поставлен ответ»),
+    либо снимается ответом движка, который ставится с `supersede`. Привязать
+    задачу обязан вызывающий: `attach_demo_delivery` или `cancel_demo_invite`.
+    """
+    if not config.demo_route_ready():
+        return None
+
+    channel = source_channel_for_role(account_role)
+    if channel not in ("channel_dm", "private_dm", "public_chat"):
+        return None
+
+    contact_id = str(thread.get("contact_id") or "").strip()
+    if not contact_id:
+        # Собеседник без username и с нулевым id: контакт не заведён, и запись
+        # уронила бы разбор по внешнему ключу, оставив человека без ответа.
+        store.log(actor, "demo.no_contact", str(thread.get("id") or ""), "")
+        return None
+
+    # Сфера нужна только для одного решения: «а не положен ли этому человеку
+    # настоящий доступ вместо демо». Само письмо про сферу не знает и знать не
+    # должно — демо-бот один на всех (`render_demo_message`).
+    #
+    # Поэтому ненайденная сфера — не отказ, а обычный случай. Раньше здесь
+    # стоял немой `return None`, и он уводил человека обратно к менеджеру: так
+    # 06.08 ушёл @secivn с подтверждённым «графическим дизайном». Словарь
+    # закрытый, четырнадцать строк, и всё, чего в нём нет, попадало в этот
+    # возврат — вместе с теми, кто сферу просто не назвал.
+    sector = str(canonical_sector_id or "").strip()
+    row = config.sector_row(sector)
+    if row is None:
+        if sector:
+            # Такого не должно быть: id приходит из enum, собранного по этому
+            # же словарю. Раз случилось — словарь и разбор разъехались.
+            store.log(actor, "demo.sector_not_in_catalog", contact_id, sector)
+        sector, status = "", SECTOR_STATUS_UNKNOWN
+    else:
+        status = row.status
+        if status == SECTOR_STATUS_READY:
+            # Готовой сфере положен настоящий доступ, а не демо. Сюда попасть
+            # можно только при расхождении словаря и конфига выдачи.
+            store.log(actor, "demo.sector_is_ready", sector, "")
+            return None
+
+    if demo_invite_blocked_by_personal_link(store, contact_id):
+        return None
+
+    existing = store.one(
+        "SELECT * FROM demo_invites WHERE contact_id = ?", (contact_id,)
+    )
+    if existing is not None and str(existing["status"]) != DEMO_STATUS_CANCELLED:
+        return None
+
+    try:
+        text = render_demo_message(config.demo_bot_link, seed=contact_id)
+    except DirectInviteError as exc:
+        store.log(actor, "demo.text_failed", contact_id, str(exc)[:200])
+        return None
+
+    stamp = at or now()
+    if existing is not None:
+        # Снятое письмо разрешает ровно одну повторную сборку: строка та же,
+        # потому что contact_id уникален.
+        store.execute(
+            "UPDATE demo_invites SET thread_id = ?, account_id = ?, "
+            "inbound_id = ?, source_channel = ?, canonical_sector_id = ?, "
+            "sector_status = ?, task_id = NULL, status = ?, updated_at = ? "
+            "WHERE id = ?",
+            (str(thread["id"]), int(inbound["account_id"]), str(inbound["id"]),
+             channel, sector, status, DEMO_STATUS_QUEUED, stamp,
+             existing["id"]),
+        )
+        demo_id = str(existing["id"])
+    else:
+        demo_id = new_id("demo")
+        store.execute(
+            "INSERT INTO demo_invites(id, contact_id, thread_id, account_id, "
+            "inbound_id, source_channel, canonical_sector_id, sector_status, "
+            "status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (demo_id, contact_id, str(thread["id"]),
+             int(inbound["account_id"]), str(inbound["id"]), channel, sector,
+             status, DEMO_STATUS_QUEUED, stamp, stamp),
+        )
+    store.log(actor, "demo.composed", contact_id,
+              f"сфера={sector or '—'} статус={status}")
+    result = dict(store.one("SELECT * FROM demo_invites WHERE id = ?", (demo_id,)))
+    result["text"] = text
+    return result
+
+
+def attach_demo_delivery(store: Store, demo_row_id: str, task_id: str,
+                         *, actor: str = "autoreply") -> None:
+    """Связать демо-письмо с задачей, которая его везёт."""
+    store.execute(
+        "UPDATE demo_invites SET task_id = ?, updated_at = ? WHERE id = ?",
+        (str(task_id), now(), str(demo_row_id)),
+    )
+    store.log(actor, "demo.queued", str(demo_row_id),
+              f"задача={task_id} одним сообщением")
+    store.commit()
+
+
+def cancel_demo_invite(store: Store, demo_row_id: str, why: str,
+                       *, actor: str = "autoreply") -> None:
+    """Письма не будет. Строку снимаем, чтобы следующий ход мог повторить.
+
+    В отличие от ссылки StartBot, здесь ничего не выпущено и терять нечего:
+    ссылка на демо-бота общая и постоянная.
+    """
+    store.execute(
+        "UPDATE demo_invites SET status = ?, updated_at = ? WHERE id = ?",
+        (DEMO_STATUS_CANCELLED, now(), str(demo_row_id)),
+    )
+    store.log(actor, "demo.cancelled", str(demo_row_id), why[:200])
+    store.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -50,6 +50,22 @@ class ReplyError(RuntimeError):
     """Ответ поставить нельзя, и причина требует решения человека."""
 
 
+class ReplyPending(ReplyError):
+    """Ответить пока нельзя: предыдущее письмо ещё не уехало.
+
+    Отдельный тип нужен ровно затем, чтобы разбор входящих не принял «рано» за
+    «сбой». Письмо со ссылкой — на тест или на демо-бота — снимать нельзя: оно
+    не черновик, а то, ради чего человек и писал. Но и карточку «autoreply
+    failed» на это заводить незачем: через тик диспетчер заберёт письмо, и
+    следующий ход ответит нормально.
+
+    Разница видна человеку. С общим `ReplyError` его второй вопрос терялся
+    навсегда — входящее помечалось разобранным, — а менеджеру уезжала карточка,
+    выглядящая как поломка. До демо-маршрута это случалось только на шести
+    сферах с готовой группой; с ним — на каждом втором согласии.
+    """
+
+
 #: Автоответы идут своей кампанией, а не вместе с ручными. Кампания — это
 #: место, где живут дневные лимиты, и мешать их нельзя: наплыв входящих не
 #: должен съедать бюджет рассылки, а рассылка — глушить ответы людям.
@@ -402,6 +418,34 @@ def queue_send(
     }
 
 
+def pending_carries_letter(store: Store, pending: Any) -> bool:
+    """Везёт ли эта задача ссылку — на бесплатный тест или на демо-бота.
+
+    Такое письмо не черновик, а то, ради чего человек и писал, поэтому снимать
+    его нельзя. Для ссылки StartBot цена снятия — сгоревшая одноразовая ссылка;
+    для демо — хуже: строка `demo_invites` остаётся в очереди, а уникальность
+    по контакту не даст завести вторую, и человек не получит демо уже никогда.
+
+    Проверок по две на каждую таблицу, и вторая не дубль первой: ссылка
+    помечается выпущенной ДО постановки письма, и между этими двумя коммитами
+    `task_id` ещё пуст — проверка по задаче в этот момент письма не узнаёт.
+    """
+    carries_invite = store.one(
+        "SELECT 1 FROM direct_invites "
+        " WHERE task_id = ? OR (contact_id = ? AND status = ? AND task_id IS NULL)",
+        (pending["id"], pending["contact_id"], INVITE_STATUS_CREATED),
+    )
+    if carries_invite is not None:
+        return True
+    carries_demo = store.one(
+        "SELECT 1 FROM demo_invites "
+        " WHERE task_id = ? OR (contact_id = ? AND status = 'queued' "
+        "                       AND task_id IS NULL)",
+        (pending["id"], pending["contact_id"]),
+    )
+    return carries_demo is not None
+
+
 def supersede_pending_reply(store: Store, pending: Any, *,
                             actor: str = "autoreply") -> bool:
     """Снять ещё не ушедший ответ, чтобы поставить вместо него свежий.
@@ -423,15 +467,7 @@ def supersede_pending_reply(store: Store, pending: Any, *,
         return False
     if pending["request_id"] or pending["command_id"]:
         return False
-    # Второе условие — не дубль первого. Ссылка помечается выпущенной ДО
-    # постановки письма, и между этими двумя коммитами `task_id` ещё пуст:
-    # проверка по задаче в этот момент письма не узнаёт.
-    carries_invite = store.one(
-        "SELECT 1 FROM direct_invites "
-        " WHERE task_id = ? OR (contact_id = ? AND status = ? AND task_id IS NULL)",
-        (pending["id"], pending["contact_id"], INVITE_STATUS_CREATED),
-    )
-    if carries_invite is not None:
+    if pending_carries_letter(store, pending):
         return False
     cursor = store.execute(
         "UPDATE tasks SET state = 'cancelled', updated_at = ? "
@@ -522,6 +558,14 @@ def queue_reply(
     if pending is not None and not (
         supersede and supersede_pending_reply(store, pending, actor=actor)
     ):
+        if supersede and pending_carries_letter(store, pending):
+            # «Рано», а не «сбой»: письмо со ссылкой снимать нельзя, но и
+            # хоронить из-за него вопрос человека незачем. Диспетчер заберёт
+            # письмо в ближайшие пару тиков, и следующий проход ответит.
+            raise ReplyPending(
+                f"письмо со ссылкой ещё не ушло ({pending['id']}); "
+                "ответим следующим ходом"
+            )
         raise ReplyError(
             f"этому собеседнику уже поставлен ответ ({pending['id']}); "
             "дождитесь отправки или снимите задачу"

@@ -16,6 +16,10 @@ EnvironmentFile=/etc/tgradar-outreach/production.env
 # контура как есть, а не копируем: два списка разрешённых сфер неминуемо
 # разъехались бы, и доступ пошёл бы выдаваться по устаревшему.
 EnvironmentFile=-/etc/tgradar-outreach/startbot.env
+# Словарь сфер. Свой файл, потому что общий с прежним контуром править опасно —
+# почему именно так, написано в самом файле. Ключи с `llm.env` не пересекаются,
+# так что взаимный порядок этих двух безразличен; `llm.env` оставлен последним.
+EnvironmentFile=/opt/outreach49/deployment/sector.env
 # Наша обёртка модели — и только файлом, не строкой `Environment=`.
 #
 # `production.env` выше задаёт `OUTREACH_LLM_COMMAND` на обёртку прежнего

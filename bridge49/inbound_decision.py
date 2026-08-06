@@ -330,6 +330,9 @@ def _presales_context(
     llm_context["automatic_free_test_sector_catalog"] = list(
         context.get("direct_invite_sector_catalog") or []
     )
+    llm_context["sector_matching_catalog"] = list(
+        context.get("sector_matching_catalog") or []
+    )
     # Промпт спрашивает у контекста, работает ли автовыдача для этого
     # собеседника (`free_test_access_branch.branch=automatic`). Ключ обязан
     # существовать: без него условие в промпте не выполнится никогда, и модель
@@ -492,6 +495,11 @@ def decide_inbound_reply(
                 confirmed_sector_available=bool(
                     llm_context.get("free_test_sector_known")
                 ),
+                known_canonical_sector_ids=[
+                    str(item.get("canonical_sector_id") or "")
+                    for item in (llm_context.get("sector_matching_catalog") or [])
+                    if isinstance(item, Mapping)
+                ],
             )
         if not normalized.technical_failure:
             break
@@ -563,6 +571,11 @@ def decide_inbound_reply(
         "matched_direct_invite_sector_id": (
             normalized.matched_direct_invite_sector_id
         ),
+        # Сопоставление сферы со словарём. Гейт демо-маршрута читает два
+        # последних ключа; без них он не включается вовсе.
+        "client_sector_text": normalized.client_sector_text,
+        "canonical_sector_id": normalized.canonical_sector_id,
+        "sector_confidence": normalized.sector_confidence,
         "knowledge_gap": normalized.knowledge_gap,
         "next_state": normalized.next_state,
     }

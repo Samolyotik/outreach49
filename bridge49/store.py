@@ -292,6 +292,33 @@ CREATE INDEX IF NOT EXISTS idx_direct_invites_status
 CREATE INDEX IF NOT EXISTS idx_direct_invites_contact
   ON direct_invites(contact_id, status);
 
+-- Демо-маршрут: сфера подтверждена, но готовой тестовой группы под неё нет,
+-- поэтому человек идёт в общий демо-бот.
+--
+-- Уникален contact_id, а не тред. «Один человек» в этой базе это контакт: на
+-- один и тот же аккаунт Telegram может быть заведено несколько тредов с
+-- разных наших отправителей, и ключ по треду означал бы столько же демо-писем
+-- одному человеку. По той же причине по контакту стоит и запрет на демо после
+-- выданной персональной ссылки.
+CREATE TABLE IF NOT EXISTS demo_invites (
+  id                  TEXT PRIMARY KEY,
+  contact_id          TEXT NOT NULL UNIQUE REFERENCES contacts(id),
+  thread_id           TEXT NOT NULL REFERENCES threads(id),
+  account_id          INTEGER NOT NULL,
+  inbound_id          TEXT NOT NULL,
+  source_channel      TEXT NOT NULL,
+  canonical_sector_id TEXT NOT NULL,
+  sector_status       TEXT NOT NULL,
+  task_id             TEXT UNIQUE REFERENCES tasks(id),
+  status              TEXT NOT NULL,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  CHECK (source_channel IN ('channel_dm', 'private_dm', 'public_chat')),
+  CHECK (status IN ('queued', 'delivered', 'cancelled'))
+);
+CREATE INDEX IF NOT EXISTS idx_demo_invites_status
+  ON demo_invites(status);
+
 -- Курсоры чтения из Radar и прочие мелочи.
 CREATE TABLE IF NOT EXISTS state (
   key   TEXT PRIMARY KEY,

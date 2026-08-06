@@ -10,6 +10,10 @@ Environment=BRIDGE49_HOME=/opt/outreach49
 # как есть, а не копируем — иначе два списка разрешённых сфер разъедутся, и
 # доступ начнёт выдаваться по устаревшему.
 EnvironmentFile=-/etc/tgradar-outreach/startbot.env
+# Тот же словарь сфер, что и у разбора. Выпуску StartBot он не нужен, а вот
+# `invites status` печатает по нему расхождения словаря и allowlist — это
+# единственный детектор рассинхрона, и без переменной он молчит всегда.
+EnvironmentFile=/opt/outreach49/deployment/sector.env
 # Выпуск отделён от разбора входящих намеренно: обращение к StartBot идёт через
 # ssh-туннель и занимает секунды, а разбор на это время встал бы.
 ExecStart=/opt/outreach49/bin/bridge49 invites process --limit 10
