@@ -34,19 +34,28 @@ Radar уже держит защиту аккаунта сам. `FloodWaitError`
 которые всё равно вернутся отказом. Плюс отличать смертельное для адресата от
 временного, чтобы не долбиться в несуществующий username вечно.
 
-## Пока только наблюдение
+## Пока только наблюдение — но не для PeerFlood
 
-Решения исполняются, только если рядом лежит файл-рубильник. Без него они
-записываются в журнал и видны в сводке, но ничего не останавливают: словарь
-кодов может оказаться шире наблюдённого, и цена ошибки в первую неделю выше
-пользы.
+Решения из таблицы исполняются, только если рядом лежит файл-рубильник. Без
+него они записываются в журнал и видны в сводке, но ничего не останавливают:
+словарь кодов может оказаться шире наблюдённого, и цена ошибки в первую неделю
+выше пользы.
+
+Немота после отказа Telegram (нижняя половина модуля) рубильника не
+спрашивает. Она стоит здесь по соседству, но это не «одно из решений
+таблицы»: у неё свой признак, своё состояние в реестре аккаунтов и свой конец
+— рука человека, а не таймер. Прятать её за выключателем с надписью
+«наблюдение» значило бы, что защита от бана не работает ровно до того дня,
+когда кто-то вспомнит создать файл.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any, Mapping
 
+from . import accounts as accounts_mod
 from .store import Store, now
 
 #: Кого касается неудача.
@@ -204,6 +213,149 @@ def held_until(store: Store, account_id: int) -> tuple[str, str] | None:
     if stamp <= now():
         return None
     return stamp, why
+
+
+# ---------------------------------------------------------------------------
+# PeerFlood: аккаунт замолкает до решения человека
+# ---------------------------------------------------------------------------
+#
+# Отдельно от таблицы выше и от рубильника `ERROR_ACTIONS`, потому что это
+# другой род решения. Всё, что там, — временное и снимается само; здесь
+# аккаунт перестаёт писать первым и ждёт человека.
+#
+# ## Чего мы НЕ видим
+#
+# Слова `PeerFlood` в ответе моста нет. Radar ловит `PeerFloodError` у себя,
+# заводит кулдаун на час, возвращает команду в очередь и пробует ещё — до
+# своего предела в три попытки. Только после этого нам приезжает исход, и
+# выглядит он так:
+#
+#     code = "mature_dm_failed"
+#     message = "Telegram send rejected; action retry cap reached"
+#
+# То есть по коду PeerFlood неотличим от любой другой неудачной отправки, а
+# `mature_dm_failed` в каталоге выше стоит как «наше, посмотреть» — и правильно
+# стоит: чаще всего это действительно наш промах. Поэтому опознаём не по коду.
+#
+# ## По чему опознаём
+#
+# 1. `avoid_account_ids` в деталях команды. Это список, который ведёт сам
+#    Radar: он дописывает туда аккаунт ровно тогда, когда собирается пробовать
+#    другим, а пробует другим он, по его же комментарию, только после
+#    FloodWait или PeerFlood. Список приезжает к нам через view и виден и на
+#    провалившейся команде, и на той, которая потом удалась чужим аккаунтом.
+#    За трое суток и 2 600 команд он появился ровно на десяти — на тех самых,
+#    где в логах Radar лежит `PeerFloodError`. Ни одного лишнего срабатывания.
+# 2. `action retry cap reached` в тексте. Тот же источник, но грубее: этой
+#    фразой Radar заканчивает команду, которую пробовал предельное число раз, а
+#    поводов для повтора у него всего два — FloodWait и PeerFlood. Нужна как
+#    запасной путь: список аккаунтов в деталях появился не во всех версиях.
+# 3. Коды `peer_flood` и `peer_flood_fence_active`. Их Radar выдаёт, когда
+#    отказывает сразу, ещё не дойдя до Telegram, — например, если кулдаун
+#    завёл кто-то другой. Прямое попадание, но редкое: наш темп обычно уводит
+#    следующую команду за пределы часа.
+#
+# FloodWait от PeerFlood по этим признакам не отличить, и разделять их мы не
+# пытаемся. Разница в том, насколько Telegram недоволен, а не в том, что
+# делать: и там и там аккаунт получил отказ трижды подряд, и продолжать им
+# рассылку — идти к бану.
+#
+# ## Чего это не ловит
+#
+# Только то, что прошло через наши команды. PeerFlood, полученный аккаунтом на
+# стороне Radar (ответ на лид, отправка руками из бизнес-форума), к нам не
+# приезжает вовсе — 04.08 так и было с MA#808. Такой аккаунт замолчит только со
+# следующей нашей команды, и то если попадёт в кулдаун.
+
+#: Коды, которыми Radar прямо называет придержанный аккаунт.
+PEER_FLOOD_CODES = frozenset({"peer_flood", "peer_flood_fence_active"})
+
+#: Чем Radar заканчивает команду, которую Telegram отклонил предельное число раз.
+RETRY_CAP_MARK = "action retry cap reached"
+
+#: Ключ в деталях команды со списком аккаунтов, которых Radar решил обойти.
+AVOID_KEY = "avoid_account_ids"
+
+#: Потолок на размер списка: детали приезжают из чужой системы, и цикл по ним
+#: не должен зависеть от того, что она туда положила.
+_AVOID_MAX = 64
+
+
+def flooded_accounts(
+    *,
+    account_id: int | None,
+    code: str | None,
+    message: str | None,
+    details: Mapping[str, Any] | None = None,
+) -> dict[int, str]:
+    """Кого из аккаунтов Telegram отклонил в этой команде и почему так решено.
+
+    Возвращает ``{account_id: причина}``. Пусто — ничего похожего на отказ
+    Telegram в ответе нет.
+    """
+    found: dict[int, str] = {}
+    normalized = str(code or "").strip()
+    text = str(message or "")
+
+    for raw in list((details or {}).get(AVOID_KEY) or [])[:_AVOID_MAX]:
+        try:
+            found[int(raw)] = "Radar обошёл этот аккаунт после отказа Telegram"
+        except (TypeError, ValueError):
+            continue
+
+    if account_id is not None:
+        if normalized in PEER_FLOOD_CODES:
+            found[int(account_id)] = f"Radar ответил {normalized}"
+        elif RETRY_CAP_MARK in text:
+            found[int(account_id)] = (
+                "Telegram отклонил отправку предельное число раз подряд"
+            )
+    return found
+
+
+def silence_flooded(
+    store: Store,
+    *,
+    task_id: str,
+    account_id: int | None,
+    code: str | None,
+    message: str | None,
+    details: Mapping[str, Any] | None = None,
+    actor: str = "errors",
+) -> list[dict]:
+    """Заставить замолчать всех, кого Telegram отклонил. Вернуть новых молчунов.
+
+    Уже молчащий аккаунт в ответе не появится: сообщать о нём второй раз
+    незачем, а вызывающий по этому списку шлёт уведомление.
+    """
+    verdicts = flooded_accounts(
+        account_id=account_id, code=code, message=message, details=details,
+    )
+    fresh: list[dict] = []
+    for target, why in sorted(verdicts.items()):
+        account = accounts_mod.get(store, target)
+        if account is None:
+            # Аккаунт не наш: `avoid_account_ids` ведёт Radar, и он вправе
+            # назвать там любой аккаунт бизнеса. Замолчать можно только своим.
+            continue
+        try:
+            changed = accounts_mod.silence(
+                store, target, reason=why, actor=actor)
+        except KeyError:
+            continue
+        store.log(actor, "error.peer_flood", task_id,
+                  f"аккаунт {target}: {why}"
+                  f"{'' if changed else ' (уже молчал)'}")
+        if changed:
+            fresh.append({
+                "id": target,
+                "label": str(account.get("label") or f"account-{target}"),
+                "why": why,
+                "task_id": task_id,
+            })
+    if verdicts:
+        store.commit()
+    return fresh
 
 
 def switch_enabled(home) -> bool:

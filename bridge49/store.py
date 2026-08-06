@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 -- Аккаунты Radar, через которые мы работаем. Снимок, обновляется sync-accounts.
@@ -33,6 +33,13 @@ CREATE TABLE IF NOT EXISTS accounts (
   runtime_state    TEXT,
   last_heartbeat_at TEXT,
   paused           INTEGER NOT NULL DEFAULT 0,   -- наша локальная пауза
+  -- Аккаунт замолчал: Telegram отклонил его отправки, и первым он больше не
+  -- пишет. Отдельно от `paused`, потому что это другое состояние: пауза
+  -- закрывает аккаунт целиком, немота — только его собственную инициативу.
+  -- Снимается лишь руками, срока у неё нет (см. `accounts.silence`).
+  silenced_at      TEXT,
+  silenced_reason  TEXT,
+  silenced_by      TEXT,
   note             TEXT,
   synced_at        TEXT    NOT NULL
 );
@@ -455,6 +462,13 @@ class Store:
         # по роли.
         ("campaigns", "accounts", "TEXT NOT NULL DEFAULT '[]'"),
         ("accounts", "roles", "TEXT NOT NULL DEFAULT '[]'"),
+        # Немота аккаунта после отказа Telegram. Три колонки, а не одна: когда
+        # замолчал — чтобы видеть давность, почему — чтобы человек, снимающий
+        # немоту, знал, что снимает, кто — чтобы отличить решение машины от
+        # решения оператора.
+        ("accounts", "silenced_at", "TEXT"),
+        ("accounts", "silenced_reason", "TEXT"),
+        ("accounts", "silenced_by", "TEXT"),
     )
 
     def _ensure_columns(self) -> None:

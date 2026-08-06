@@ -237,6 +237,9 @@ def render(store: Store, settings: Settings, path: str, query: dict) -> str:
                 "включён": "да" if r["enabled"] else "нет",
                 "входящие": "да" if r["publish_inbound"] else "нет",
                 "пауза": "да" if r["paused"] else "нет",
+                "молчит": (str(r["silenced_at"]).replace("T", " ")[:16]
+                           if r["silenced_at"] else "нет"),
+                "почему молчит": r["silenced_reason"] or "—",
             } for r in rows
         ], numeric=("id", "действий"))
         title = "Аккаунты"
@@ -262,7 +265,8 @@ def render(store: Store, settings: Settings, path: str, query: dict) -> str:
         }
         accounts = store.one(
             "SELECT count(*) AS total, "
-            "sum(CASE WHEN enabled = 1 AND paused = 0 THEN 1 ELSE 0 END) AS ready "
+            "sum(CASE WHEN enabled = 1 AND paused = 0 "
+            "         AND silenced_at IS NULL THEN 1 ELSE 0 END) AS ready "
             "FROM accounts"
         )
         handoffs = store.one(

@@ -228,8 +228,11 @@ def check_stuck_tasks(store: Store, report: Report) -> None:
 
 def check_fleet(store: Store, settings: Settings, report: Report) -> None:
     """Боевой режим включён, а работать некому — тихий простой рассылки."""
+    # Молчащий аккаунт умеет отвечать, но рассылку не ведёт, а проверка именно
+    # про неё: «работать некому» — это про то, что некому написать первым.
     row = store.one(
-        "SELECT count(*) AS n FROM accounts WHERE paused = 0 AND enabled = 1"
+        "SELECT count(*) AS n FROM accounts WHERE paused = 0 AND enabled = 1 "
+        "AND silenced_at IS NULL"
     )
     usable = int(row["n"]) if row else 0
     report.facts["accounts_usable"] = usable
@@ -241,6 +244,32 @@ def check_fleet(store: Store, settings: Settings, report: Report) -> None:
                 "боевой режим включён, но ни одного доступного аккаунта",
             )
         )
+
+
+def check_silenced(store: Store, report: Report) -> None:
+    """Аккаунты, замолчавшие после отказа Telegram.
+
+    Наблюдение, а не поломка: молчание — это сработавшая защита, а не сбой.
+    Но висеть незамеченным оно не должно. Само по себе оно не пройдёт, и
+    каждый молчащий аккаунт — минус одна пара рук у рассылки.
+    """
+    rows = store.query(
+        "SELECT id, silenced_at FROM accounts WHERE silenced_at IS NOT NULL "
+        "ORDER BY id"
+    )
+    report.facts["accounts_silenced"] = len(rows)
+    if not rows:
+        return
+    who = ", ".join(f"MA#{row['id']}" for row in rows[:12])
+    if len(rows) > 12:
+        who += f" и ещё {len(rows) - 12}"
+    report.findings.append(
+        Finding(
+            "молчащие аккаунты", WARNING,
+            f"{len(rows)} не пишут первым после отказа Telegram: {who}; "
+            "снимается только руками (accounts --release ID)",
+        )
+    )
 
 
 async def check_bridge(store: Store, settings: Settings, report: Report) -> None:
@@ -310,6 +339,7 @@ def compose_message(report: Report, *, host: str) -> str:
     lines.append(
         f"последний poll: {facts.get('last_poll_at') or '—'}; "
         f"аккаунтов доступно: {facts.get('accounts_usable')}; "
+        f"молчат: {facts.get('accounts_silenced', 0)}; "
         f"боевой режим: {'да' if facts.get('armed') else 'нет'}"
     )
     return "\n".join(lines)
@@ -347,6 +377,7 @@ async def run(
     check_handoffs(store, report)
     check_stuck_tasks(store, report)
     check_fleet(store, settings, report)
+    check_silenced(store, report)
     if with_bridge:
         await check_bridge(store, settings, report)
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any
 
-from . import errors
+from . import alerts, errors
 from .config import Settings
 from .radar import RadarBridge
 from .store import Store, dumps, loads, new_id, now
@@ -70,6 +70,7 @@ async def poll_results(
         results = await link.results(sorted(by_command))
 
     updated = running = 0
+    silenced: list[dict] = []
     for record in results:
         task_id = by_command.get(int(record["id"]))
         if task_id is None:
@@ -89,6 +90,21 @@ async def poll_results(
                     "UPDATE tasks SET error_message=?, updated_at=? WHERE id=?",
                     (dumps(retry)[:500], now(), task_id),
                 )
+            # Ждать исхода команды, чтобы заметить отказ Telegram, — значит
+            # ждать лишний час и лишние две попытки: Radar пишет обойдённый
+            # аккаунт в детали сразу после первого отказа, а команду
+            # возвращает в очередь до трёх раз, каждый раз переждав кулдаун.
+            # 05.08 MA#851 так стучался с 19:04 до полуночи. Замолчать надо на
+            # первом отказе, а не на последнем.
+            silenced.extend(errors.silence_flooded(
+                store,
+                task_id=task_id,
+                account_id=None,  # владелец команды ещё может смениться
+                code="",
+                message="",
+                details=details,
+                actor=actor,
+            ))
             continue
 
         outcome = str(result.get("outcome") or "")
@@ -136,6 +152,18 @@ async def poll_results(
         already_classified = task_id in known_error and known_error[task_id] == (
             code_now, message_now or ""
         )
+        # Отказ Telegram ищется на каждом терминальном исходе, а не только на
+        # неудачном: команда, которую Radar доделал другим аккаунтом, приезжает
+        # как `done` — и всё равно несёт в деталях того, кто получил отказ.
+        silenced.extend(errors.silence_flooded(
+            store,
+            task_id=task_id,
+            account_id=account_of.get(task_id),
+            code=code_now,
+            message=message_now,
+            details=details,
+            actor=actor,
+        ))
         if (state in ("failed", "skipped") and isinstance(error, dict)
                 and not already_classified):
             # Разбор неудачи идёт здесь, а не в диспетчере: сюда приезжает
@@ -154,7 +182,14 @@ async def poll_results(
     store.log(actor, "poll.results", "",
               f"checked={len(results)} updated={updated} running={running}")
     store.commit()
-    return {"checked": len(results), "updated": updated, "still_running": running}
+    if silenced:
+        await alerts.announce_silence(store, silenced, actor=actor)
+    return {
+        "checked": len(results),
+        "updated": updated,
+        "still_running": running,
+        "silenced": [item["id"] for item in silenced],
+    }
 
 
 def _touch_thread_outbound(store: Store, task_id: str, result: dict) -> None:

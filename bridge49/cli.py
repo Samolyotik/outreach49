@@ -59,7 +59,9 @@ def cmd_status(args) -> int:
         }
         accounts = store.one(
             "SELECT count(*) AS total, "
-            "       sum(CASE WHEN paused = 0 AND enabled = 1 THEN 1 ELSE 0 END) AS ready "
+            "       sum(CASE WHEN paused = 0 AND enabled = 1 "
+            "                AND silenced_at IS NULL THEN 1 ELSE 0 END) AS ready, "
+            "       sum(CASE WHEN silenced_at IS NOT NULL THEN 1 ELSE 0 END) AS mute "
             "FROM accounts"
         )
         handoffs = store.one(
@@ -72,7 +74,9 @@ def cmd_status(args) -> int:
             ("база", settings.db_path),
             ("боевой режим", report.good("ВКЛЮЧЁН") if settings.armed
              else "выключен (dispatch только показывает предпросмотр)"),
-            ("аккаунтов", f"{accounts['ready'] or 0} готовых из {accounts['total']}"),
+            ("аккаунтов", f"{accounts['ready'] or 0} готовых из {accounts['total']}"
+             + (f", молчат {accounts['mute']} (accounts --silenced)"
+                if accounts["mute"] else "")),
             ("контактов", sum(contacts.values())),
             ("задач", sum(counts.values())),
             ("ждут менеджера", handoffs["n"]),
@@ -240,6 +244,37 @@ def cmd_accounts(args) -> int:
             accounts_mod.pause(store, args.resume, False, actor=args.actor)
             print(f"аккаунт {args.resume} снова в работе")
             return 0
+        if args.silence is not None:
+            changed = accounts_mod.silence(
+                store, args.silence, actor=args.actor,
+                reason=args.why or "решение оператора",
+            )
+            print(f"аккаунт {args.silence} "
+                  + ("больше не пишет первым" if changed else "и так молчал"))
+            return 0
+        if args.release:
+            for account_id in args.release:
+                changed = accounts_mod.release(
+                    store, account_id, actor=args.actor)
+                print(report.good(f"аккаунт {account_id} снова пишет первым")
+                      if changed else f"аккаунт {account_id} не молчал")
+            return 0
+        if args.silenced:
+            rows = accounts_mod.silenced_accounts(store)
+            if not rows:
+                print("молчащих аккаунтов нет")
+                return 0
+            print(report.table([
+                {
+                    "id": r["id"],
+                    "метка": r["label"],
+                    "молчит с": str(r["silenced_at"]).replace("T", " ")[:19],
+                    "почему": r["silenced_reason"],
+                    "кто": r["silenced_by"],
+                }
+                for r in rows
+            ]))
+            return 0
         if args.resume_one:
             step = accounts_mod.resume_one(
                 store, args.resume_one, actor=args.actor)
@@ -268,6 +303,7 @@ def cmd_accounts(args) -> int:
                 "вкл": a["enabled"],
                 "входящие": a["publish_inbound"],
                 "пауза": a["paused"],
+                "молчит": bool(a.get("silenced_at")),
                 "состояние": a["runtime_state"],
             }
             for a in rows
@@ -1182,6 +1218,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--role", help="фильтр по роли")
     p.add_argument("--pause", type=int, metavar="ID")
     p.add_argument("--resume", type=int, metavar="ID")
+    p.add_argument("--silence", type=int, metavar="ID",
+                   help="аккаунт перестаёт писать первым, но продолжает "
+                        "отвечать тем, кто написал ему")
+    p.add_argument("--why", metavar="ТЕКСТ",
+                   help="причина немоты, попадёт в реестр и в журнал")
+    p.add_argument("--release", type=int, nargs="+", metavar="ID",
+                   help="вернуть право писать первым (только так немота и "
+                        "снимается — сроком она не ограничена)")
+    p.add_argument("--silenced", action="store_true",
+                   help="кто сейчас молчит и почему")
     p.add_argument("--resume-one", dest="resume_one", metavar="ROLE",
                    choices=sorted(catalog.ROLES),
                    help="ввести в работу один приостановленный аккаунт роли "

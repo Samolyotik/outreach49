@@ -13,8 +13,21 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import catalog
+from . import catalog, replies
 from .store import Store, dumps, loads, now
+
+
+#: Что молчащему аккаунту всё-таки можно.
+#:
+#: Ответы — потому что немота односторонняя: человек, написавший нам сам, ждёт
+#: и не виноват в том, что Telegram недоволен рассылкой. Эхо — потому что оно
+#: не выходит за пределы Radar (`catalog.NO_TELEGRAM_ACTIONS`) и нужно, чтобы
+#: `doctor` продолжал проверять связь и права придержанного аккаунта.
+#:
+#: Всё остальное закрыто, включая чтение метаданных: resolve чужого имени —
+#: это не отправка, но это ровно то же самое обхаживание незнакомцев, за
+#: которое Telegram и выдал отметку.
+SILENCE_ALLOWED = frozenset(replies.REPLY_ACTIONS | catalog.NO_TELEGRAM_ACTIONS)
 
 
 def load_snapshot(path: Path | str) -> list[dict]:
@@ -142,6 +155,10 @@ def _hydrate(row: Any) -> dict:
 
 def usable(account: dict, action: str) -> tuple[bool, str]:
     """Можно ли поручить этому аккаунту это действие прямо сейчас."""
+    if silenced(account) is not None and action not in SILENCE_ALLOWED:
+        mute = silenced(account)
+        return False, (f"аккаунт молчит с {mute[0]}: {mute[1]}; "
+                       f"вернуть в работу — accounts --release {account['id']}")
     if account["paused"]:
         return False, "аккаунт на локальной паузе"
     if not account["enabled"]:
@@ -216,6 +233,89 @@ def resume_one(store: Store, role: str, *, actor: str = "cli") -> dict | None:
               f"role={role} осталось={left['n']}")
     store.commit()
     return {"id": account_id, "left": int(left["n"])}
+
+
+# ---------------------------------------------------------------------------
+# немота: аккаунт отвечает, но больше ничего не начинает
+# ---------------------------------------------------------------------------
+#
+# Telegram отклонил отправки аккаунта — значит он на подозрении, и следующая
+# рассылка с него ведёт не к лидам, а к бану. Но замолчать целиком нельзя:
+# люди, которым он уже написал, продолжают отвечать, и оставить их без ответа
+# хуже, чем не написать новым. Поэтому немота односторонняя — не пишет первым,
+# но отвечает.
+#
+# Срока у немоты нет намеренно. Кулдаун Radar длится час и снимается сам; наш
+# час ничего бы не добавил, кроме иллюзии, что проблема решена ожиданием.
+# PeerFlood — это отметка Telegram о том, что аккаунт ведёт себя как спамер, и
+# снимать её должен человек, который посмотрел, за что она получена.
+
+
+def silenced(account: dict) -> tuple[str, str] | None:
+    """Молчит ли аккаунт и почему. ``None`` — работает как обычно."""
+    stamp = account.get("silenced_at")
+    if not stamp:
+        return None
+    return str(stamp), str(account.get("silenced_reason") or "причина не записана")
+
+
+def silence(
+    store: Store, account_id: int, *, reason: str, actor: str = "cli",
+) -> bool:
+    """Заставить аккаунт замолчать. ``False`` — он уже молчал.
+
+    Повторный вызов намеренно ничего не переписывает: первая причина — та, с
+    которой всё началось, и подменять её десятым по счёту отказом значит
+    потерять начало истории.
+    """
+    account_id = int(account_id)
+    row = store.one(
+        "SELECT silenced_at FROM accounts WHERE id = ?", (account_id,)
+    )
+    if row is None:
+        raise KeyError(f"нет аккаунта {account_id} в реестре")
+    if row["silenced_at"]:
+        return False
+    store.execute(
+        "UPDATE accounts SET silenced_at = ?, silenced_reason = ?, "
+        "silenced_by = ? WHERE id = ?",
+        (now(), str(reason)[:300], str(actor), account_id),
+    )
+    store.log(actor, "accounts.silence", str(account_id), str(reason)[:300])
+    store.commit()
+    return True
+
+
+def release(store: Store, account_id: int, *, actor: str = "cli") -> bool:
+    """Вернуть аккаунту право писать первым. ``False`` — он и не молчал."""
+    account_id = int(account_id)
+    row = store.one(
+        "SELECT silenced_at, silenced_reason FROM accounts WHERE id = ?",
+        (account_id,),
+    )
+    if row is None:
+        raise KeyError(f"нет аккаунта {account_id} в реестре")
+    if not row["silenced_at"]:
+        return False
+    store.execute(
+        "UPDATE accounts SET silenced_at = NULL, silenced_reason = NULL, "
+        "silenced_by = NULL WHERE id = ?",
+        (account_id,),
+    )
+    store.log(actor, "accounts.release", str(account_id),
+              f"молчал с {row['silenced_at']}: {row['silenced_reason'] or '—'}")
+    store.commit()
+    return True
+
+
+def silenced_accounts(store: Store) -> list[dict]:
+    """Все молчащие, от давних к недавним."""
+    return [
+        dict(row) for row in store.query(
+            "SELECT id, label, silenced_at, silenced_reason, silenced_by "
+            "FROM accounts WHERE silenced_at IS NOT NULL ORDER BY silenced_at"
+        )
+    ]
 
 
 def pause(store: Store, account_id: int, paused: bool, *, actor: str = "cli") -> None:

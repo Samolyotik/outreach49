@@ -11,14 +11,17 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import _parse_env_file
+from .store import Store
 
 #: Куда смотреть за реквизитами, если не задано иное.
 DEFAULT_ALERTS_FILE = "/etc/outreach49/alerts.env"
@@ -101,3 +104,68 @@ def send(target: TelegramTarget, text: str) -> int:
     if not body.get("ok"):
         raise AlertError(str(body)[:300])
     return int(body["result"]["message_id"])
+
+
+# ---------------------------------------------------------------------------
+# замолчавшие аккаунты
+# ---------------------------------------------------------------------------
+
+
+def compose_silence_message(silenced: list[dict], *, host: str) -> str:
+    """Текст про аккаунты, которые перестали писать первыми.
+
+    Команда возврата стоит в конце и с перечислением всех номеров — чтобы её
+    можно было скопировать целиком, не выписывая id из строк выше.
+    """
+    plural = "аккаунты" if len(silenced) > 1 else "аккаунт"
+    lines = [
+        f"🔇 outreach49 ({host}): Telegram отклонил отправки, "
+        f"{plural} больше не пишет первым",
+        "",
+    ]
+    for item in silenced:
+        lines.append(f"MA#{item['id']} {item['label']} — {item['why']}")
+        lines.append(f"    задача {item['task_id']}")
+    lines.append("")
+    lines.append(
+        "Ответы на входящие продолжаются — молчание касается только того, что "
+        "аккаунт начинает сам: рассылки и разведки."
+    )
+    lines.append(
+        "Само оно не снимется. Вернуть в работу: bridge49 accounts --release "
+        + " ".join(str(item["id"]) for item in silenced)
+    )
+    return "\n".join(lines)
+
+
+async def announce_silence(
+    store: Store, silenced: list[dict], *, actor: str = "cli",
+) -> str | None:
+    """Сообщить в админку. Недоставленное уведомление опрос не роняет.
+
+    Причина, по которой здесь `try` вокруг всего: зовут отсюда опрос
+    результатов — сердце контура, он ходит каждые пятнадцать секунд. Уронить
+    его из-за недоступного Telegram значило бы поменять одну проблему на
+    большую. Сам факт немоты записан в базу до этого вызова, и потерять его
+    неудачная отправка не может.
+    """
+    try:
+        target = TelegramTarget.from_file()
+        if target is None or not target.enabled:
+            return None
+        message = compose_silence_message(silenced, host=socket.gethostname())
+        # Отправка блокирующая: уводим её из петли событий.
+        message_id = await asyncio.to_thread(send, target, message)
+    except AlertError as exc:
+        store.log(actor, "accounts.silence_alert_failed", "", str(exc)[:300])
+        store.commit()
+        return f"не доставлено: {exc}"
+    except Exception as exc:  # noqa: BLE001 — см. докстроку
+        store.log(actor, "accounts.silence_alert_failed", "",
+                  f"{type(exc).__name__}: {exc}"[:300])
+        store.commit()
+        return f"не доставлено: {type(exc).__name__}"
+    store.log(actor, "accounts.silence_alert_sent", target.describe(),
+              str(message_id))
+    store.commit()
+    return f"отправлено в {target.describe()}"
