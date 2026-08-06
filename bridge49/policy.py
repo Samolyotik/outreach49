@@ -193,9 +193,16 @@ def is_affirmative_opt_out_confirmation(text: str) -> bool:
 def classify_inbound(text: str) -> MessageClassification:
     """Classify local safety cases while silently dropping confirmed spam.
 
-    Explicit opt-out and confirmed promotional spam are the no-reply gates.
-    Complaints, non-Russian and unclear content keep their diagnostic intent,
-    and the conversation layer sends a short deterministic reply.
+    Опт-аут, подтверждённый рекламный спам и любой нерусский текст остаются без
+    ответа. Жалоба тоже: она уходит менеджеру карточкой, а спорить с ней
+    машине нечем. Короткую вежливую рамку получает ровно один случай —
+    `meaningless`, бессмысленный русский текст.
+
+    Прежняя формулировка обещала рамку и жалобам, и нерусским; ни того, ни
+    другого не было ни дня. Нерусское входящее приходит сюда с intent `spam`, а
+    `apply` на спаме молчит; жалоба уходит вердиктом `manager_handoff`, а он
+    без текста. Описание разошлось с кодом, и это опаснее, чем кажется: по нему
+    поведение и «чинят».
     """
     normalized = normalize_text(text)
     if is_opt_out_request(normalized):
