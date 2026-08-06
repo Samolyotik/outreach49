@@ -166,6 +166,54 @@ class ПисьмоДописывается(unittest.TestCase):
         self.assertEqual(self.письма(), [])
 
 
+class СсылкаБезСогласия(ПисьмоДописывается):
+    """Ссылка уходит и тогда, когда человек ни о чём не просил.
+
+    Промпт это правило принимает на словах, но на живом ходу @Anrri21 не взял
+    его три раза подряд — перевешивало соседнее «free_test_access только когда
+    человек просит». Решение механическое: сфера названа, готовой группы нет,
+    ссылка общая. Держать его на усмотрении модели незачем.
+    """
+
+    def вопрос(self, **extra):
+        """Ход без согласия: человек просто назвал сферу и спросил про цену."""
+        payload = self.согласие(handoff_kind="none", handoff_required=False,
+                                decision="auto_reply")
+        payload.update(extra)
+        return payload
+
+    def test_сфера_названа_ссылка_уходит(self):
+        итог = autoreply.apply(self.store, self.inbound, self.вопрос(),
+                               actor="test", branch_config=self.branch)
+        self.assertTrue(итог["demo"], "ссылка обязана уйти и без просьбы")
+        self.assertEqual(итог["invite"], "", "заявки на выдачу тут быть не должно")
+        письмо = self.письма()[0]
+        self.assertIn(ОТВЕТ, письмо)
+        self.assertIn("t.me/tg_radar_robot", письмо)
+
+    def test_согласия_которого_не_было_не_записываем(self):
+        """Заявка означала бы, что человек просил доступ. Он не просил."""
+        autoreply.apply(self.store, self.inbound, self.вопрос(),
+                        actor="test", branch_config=self.branch)
+        self.assertEqual(
+            self.store.query("SELECT id FROM direct_invites"), [])
+
+    def test_без_названной_сферы_ссылки_нет(self):
+        итог = autoreply.apply(
+            self.store, self.inbound,
+            self.вопрос(client_sector_text="", collected_fields_update={}),
+            actor="test", branch_config=self.branch)
+        self.assertEqual(итог["demo"], "")
+
+    def test_сфера_с_готовой_группой_идёт_своим_путём(self):
+        """Там настоящая выдача, и она спрашивает согласия. Демо ей не положено."""
+        итог = autoreply.apply(
+            self.store, self.inbound,
+            self.вопрос(matched_direct_invite_sector_id="auto_import_dealers"),
+            actor="test", branch_config=self.branch)
+        self.assertEqual(итог["demo"], "")
+
+
 class ПунктХодаПодДемо(unittest.TestCase):
     """Демо-ссылке не нужен пункт `action_required`, а настоящей выдаче нужен.
 

@@ -446,6 +446,46 @@ def remember_discovery(store: Store, thread: dict, update: dict) -> None:
     )
 
 
+def demo_route_applies(
+    decision: dict,
+    *,
+    branch_config: "direct_invite.BranchConfig | None" = None,
+) -> bool:
+    """Положена ли этому ходу ссылка на демо-бота без всякого согласия.
+
+    Условие одно: человек назвал свою сферу, и готовой тестовой группы под неё
+    нет. Тогда ссылка на общий демо-бот — единственное, что мы можем дать
+    сразу, и просить её незачем: она бессрочная, общая и уходит один раз
+    (`record_demo_invite` держит по одной на контакт).
+
+    Почему это решается здесь, а не промптом. Правило туда добавлено, и на
+    словах модель его принимает, но на живом ходу @Anrri21 не взяла три раза
+    подряд: перевешивало соседнее «free_test_access только когда человек
+    просит». Уговаривать текстом дальше — значит держать выдачу ссылки на
+    усмотрение модели там, где решение полностью механическое.
+
+    Само письмо всё равно собирает `record_demo_invite`, и все его отказы
+    остаются в силе: молчаливый ход, чужой канал, уже выданная персональная
+    ссылка, уже собранное демо. Здесь только повод, а не право.
+    """
+    сфера = str(decision.get("client_sector_text") or "").strip()
+    if not сфера:
+        # Сферу мог подтвердить и текущий ход через collected_fields_update:
+        # `client_sector_text` появился позже и на старых решениях пуст.
+        собрано = decision.get("collected_fields_update")
+        if isinstance(собрано, dict):
+            сфера = str(собрано.get("sector") or "").strip()
+    if not сфера:
+        return False
+    # Сфера с готовой группой идёт своим путём — там настоящая выдача, и она
+    # спрашивает согласия. Демо ей не положено.
+    выбранная = str(decision.get("matched_direct_invite_sector_id") or "").strip()
+    if выбранная:
+        return False
+    branch = branch_config or direct_invite.BranchConfig.from_env()
+    return branch.demo_route_ready()
+
+
 def manager_card_reason(verdict: str, decision: dict) -> str:
     """Зачем этому разговору живой человек. Пустая строка — незачем.
 
@@ -623,7 +663,9 @@ def apply(
     # Если ветка не подошла (выключена, сфера чужая, канал не тот), всё идёт
     # прежним путём. Автоматика умеет только добавлять.
     conflict = ""
-    if direct_invite.consent_from_decision(decision):
+    if direct_invite.consent_from_decision(decision) or demo_route_applies(
+        decision, branch_config=branch_config
+    ):
         branch = branch_config or direct_invite.BranchConfig.from_env()
         # Считаем до выдачи: гейт специализации отказывает молча внутри
         # `record_consent`, и снаружи его отказ неотличим от «сфера не подошла».
@@ -631,6 +673,10 @@ def apply(
         # готовая группа есть, просто не та, что выбрала модель.
         conflict = direct_invite.specialization_conflict(
             branch, decision=decision, inbound=inbound)
+        # Согласия может и не быть: сюда же входит ход, где человек просто
+        # назвал свою сферу, а готовой группы под неё нет. Записывать согласие,
+        # которого он не давал, нельзя — заявка на выдачу означала бы, что он
+        # просил доступ. Ему полагается только общая ссылка ниже.
         recorded = direct_invite.record_consent(
             store,
             config=branch,
@@ -638,7 +684,7 @@ def apply(
             inbound=inbound,
             account_role=account_role_for(store, inbound),
             sector_id=direct_invite.sector_from_decision(decision),
-        )
+        ) if direct_invite.consent_from_decision(decision) else None
         if recorded is not None:
             result["invite"] = str(recorded["request_id"])
             # Ссылку выпускаем прямо здесь, чтобы она уехала этим же письмом.
