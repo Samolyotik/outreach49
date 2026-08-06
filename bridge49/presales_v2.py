@@ -773,7 +773,10 @@ def call_presales_v2_llm(
     payload: dict[str, object],
     *,
     command: Optional[str] = None,
-    timeout_seconds: float = 240,
+    # Совпадает с `decide_inbound_reply`: он это значение и передаёт, а
+    # умолчание здесь нужно прямым вызовам. Разъехавшись, они дали бы разный
+    # предел на один и тот же вызов.
+    timeout_seconds: float = 380,
     supersession_check: Optional[Callable[[], str]] = None,
 ) -> PresalesV2ExternalResult:
     command_value = command or os.environ.get("OUTREACH_LLM_COMMAND")

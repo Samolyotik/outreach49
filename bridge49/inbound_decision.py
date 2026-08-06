@@ -353,7 +353,11 @@ def decide_inbound_reply(
     context: Mapping[str, object],
     *,
     command: Optional[str] = None,
-    timeout_seconds: float = 240,
+    # Верхний из трёх пределов: он убивает саму обёртку. Держать его ниже
+    # прокси-маршрута бессмысленно — маршруту тогда не дадут доработать. При
+    # 300 с на маршрут здесь нужно больше 300; 380 даёт один полный маршрут и
+    # запас на накладные обёртки.
+    timeout_seconds: float = 380,
     truth_pack: Optional[CustomerTruthPack] = None,
     llm_caller: LLMCaller = call_presales_v2_llm,
 ) -> dict[str, object]:

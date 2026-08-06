@@ -110,3 +110,48 @@ class AutoreplyUnitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ВложенностьТаймаутов(unittest.TestCase):
+    """Три предела на один вызов модели, и все три обязаны согласоваться.
+
+    Обёртка берёт `min(CODEX_LLM_TIMEOUT_SECONDS,
+    CODEX_LLM_PROXY_ATTEMPT_TIMEOUT_SECONDS)`, поэтому поднять только второй —
+    значит не поднять ничего: первый обрежет его обратно. А сверху обе
+    накрывает `decide_inbound_reply(timeout_seconds=...)`, который убивает саму
+    обёртку; будь он меньше, маршруту не дали бы доработать.
+
+    Проверка держит именно согласованность, а не конкретные числа: менять их
+    можно, разъезжаться — нет.
+    """
+
+    def значения(self) -> dict[str, float]:
+        из_файла = {}
+        for строка in OVERRIDE.read_text(encoding="utf-8").splitlines():
+            строка = строка.strip()
+            if строка.startswith("CODEX_LLM") and "=" in строка:
+                имя, _, значение = строка.partition("=")
+                из_файла[имя.strip()] = float(значение.strip().strip('"'))
+        return из_файла
+
+    def test_оба_предела_заданы_и_равны(self):
+        значения = self.значения()
+        self.assertIn("CODEX_LLM_TIMEOUT_SECONDS", значения)
+        self.assertIn("CODEX_LLM_PROXY_ATTEMPT_TIMEOUT_SECONDS", значения)
+        self.assertEqual(
+            значения["CODEX_LLM_TIMEOUT_SECONDS"],
+            значения["CODEX_LLM_PROXY_ATTEMPT_TIMEOUT_SECONDS"],
+            "общий предел обрежет маршрутный: обёртка берёт из них минимум")
+
+    def test_предел_на_стороне_python_больше_маршрутного(self):
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from bridge49 import inbound_decision, presales_v2
+        маршрут = self.значения()["CODEX_LLM_PROXY_ATTEMPT_TIMEOUT_SECONDS"]
+        for функция in (inbound_decision.decide_inbound_reply,
+                        presales_v2.call_presales_v2_llm):
+            with self.subTest(функция=функция.__name__):
+                предел = функция.__kwdefaults__["timeout_seconds"]
+                self.assertGreater(
+                    предел, маршрут,
+                    "обёртку убьют раньше, чем маршрут доработает")
