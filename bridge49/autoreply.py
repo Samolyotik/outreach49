@@ -38,6 +38,7 @@ from . import direct_invite
 from . import outreach_texts
 from . import replies
 from .inbound_decision import decide_inbound_reply
+from .policy import inbound_language_reason, normalize_text
 from .presales_context import non_silent_boundary_reply
 from .store import Store, dumps, new_id, now
 
@@ -311,6 +312,43 @@ def we_started_it(store: Store, thread: dict) -> bool:
         "                 'send_public_chat_message', 'reply_private_dm', "
         "                 'reply_channel_dm') LIMIT 1",
         (thread["contact_id"],),
+    ) is not None
+
+
+def answered_our_chat_post(store: Store, inbound: dict, thread: dict) -> bool:
+    """Похоже ли, что человек пишет в ответ на наше объявление в чате.
+
+    Объявления в публичных чатах для того и существуют, чтобы люди писали нам
+    сами. Но в личке такой отклик неотличим от постороннего: наше сообщение
+    ушло в ЧАТ, а чат — другой контакт, и проверка «мы этому человеку писали»
+    его не находит. Из-за этого движок молчал ровно тем, ради кого контур и
+    работает: за 04–07.08 так пропущено 25 человек, и 19 из них — отклики на
+    наши объявления. Саид из «Азии Под Капотом» ответил через полторы минуты
+    после объявления и переспрашивал ещё двадцать минут.
+
+    Три условия, и каждое сужает:
+
+    * личка. Ответ в чате или в личку канала сюда не относится: там у нас есть
+      своя отправка, и обычная проверка их и так пропускает;
+    * у диалога нет перенесённой истории. Гейт писался ради собеседников
+      прежних владельцев аккаунтов — вот они, 694 импортированных диалога, и
+      они остаются под ним. Ни у одного из 25 пропущенных истории нет;
+    * текст — осмысленный русский. Персидское письмо, «Bre», реклама прокси и
+      голый телефон остаются посторонними, как и были.
+
+    Плюс сам аккаунт должен быть тем, кто объявления и даёт.
+    """
+    if str(inbound.get("surface") or "") != "private_dm":
+        return False
+    if store.one("SELECT 1 FROM history WHERE thread_id = ? LIMIT 1",
+                 (thread["id"],)) is not None:
+        return False
+    if inbound_language_reason(normalize_text(str(inbound.get("text") or ""))):
+        return False
+    return store.one(
+        "SELECT 1 FROM tasks WHERE account_id = ? AND state = 'done' "
+        "  AND action = 'send_public_chat_message' LIMIT 1",
+        (int(inbound["account_id"]),),
     ) is not None
 
 
@@ -1074,7 +1112,9 @@ def skip_reason(store: Store, inbound: dict, thread: dict, settings) -> str:
     """Почему с этим входящим машина не работает. Пусто — работает."""
     if arabic_script_peer(store, inbound, thread):
         return "собеседник записан арабским письмом"
-    if not (settings.autoreply_strangers or we_started_it(store, thread)):
+    if not (settings.autoreply_strangers
+            or we_started_it(store, thread)
+            or answered_our_chat_post(store, inbound, thread)):
         return "входящее от постороннего"
     limit = int(settings.limits.reply_max_inbound_age_hours)
     age = inbound_age_hours(inbound)

@@ -1786,3 +1786,115 @@ class PendingReplyGateTests(unittest.TestCase):
                                llm_caller=caller)
         self.assertEqual(result["deferred"], 1, "первый отложен")
         self.assertTrue(reached, "второй обязан дойти до модели, а не ждать")
+
+
+class ChatPostReplyGateTests(unittest.TestCase):
+    """Отклик на наше объявление в чате — не посторонний.
+
+    Объявления в публичных чатах для того и нужны, чтобы люди писали нам сами.
+    Но наше сообщение ушло в ЧАТ, а чат — другой контакт, и проверка «мы этому
+    человеку писали» его не находит. За 04–07.08 так промолчали 25 раз, и 19 из
+    них — отклики автодилеров на наш крючок «ищу, кто пригоняет».
+
+    Правило узкое намеренно: оно не должно открыть дверь ни спаму, ни
+    собеседникам прежних владельцев аккаунтов.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        contact = entities.add_contact(self.store, username="dealer",
+                                       segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES('th1',821,'@dealer',?,'private_dm','open',?,?)",
+            (self.contact_id, now(), now()))
+        self.store.commit()
+        self.thread = dict(self.store.one("SELECT * FROM threads WHERE id='th1'"))
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def post_to_a_chat(self, state: str = "done") -> None:
+        chat = entities.add_contact(self.store, username="somechat",
+                                    segment="chats", actor="test")
+        self.store.execute(
+            "INSERT INTO campaigns(id, name, action, created_at, updated_at) "
+            "VALUES('topup','добор','send_public_chat_message',?,?)",
+            (now(), now()))
+        self.store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, state, created_at, updated_at) "
+            "VALUES('t1','topup',?,821,'send_public_chat_message','{}',"
+            "'immediate',?,?,?,?)",
+            (chat["id"], now(), state, now(), now()))
+        self.store.commit()
+
+    def inbound(self, text: str, surface: str = "private_dm") -> dict:
+        return {"id": "1", "account_id": 821, "surface": surface, "text": text}
+
+    def answers(self, text: str, surface: str = "private_dm") -> bool:
+        return autoreply.answered_our_chat_post(
+            self.store, self.inbound(text, surface), self.thread)
+
+    def test_a_russian_reply_after_our_chat_post_is_ours(self):
+        self.post_to_a_chat()
+        self.assertTrue(self.answers("Здравствуйте! Вас какой автомобиль "
+                                     "интересует? Мы возим из Кореи"))
+
+    def test_without_a_chat_post_the_person_stays_a_stranger(self):
+        self.assertFalse(self.answers("Здравствуйте! Вас какой автомобиль "
+                                      "интересует?"))
+
+    def test_an_unsent_chat_post_does_not_count(self):
+        """Запланированное объявление ещё никого не позвало."""
+        self.post_to_a_chat(state="planned")
+        self.assertFalse(self.answers("Здравствуйте, что вас интересует?"))
+
+    def test_foreign_and_meaningless_stay_strangers(self):
+        self.post_to_a_chat()
+        for text in ("Hello", "سلام عرض ادب", "👋", "+7 (909) 285-24-24",
+                     "Server: o.turboproxy.pro Port: 443"):
+            with self.subTest(text=text):
+                self.assertFalse(self.answers(text))
+
+    def test_an_inherited_dialogue_stays_closed(self):
+        """Ради них гейт и писался: собеседники прежних владельцев."""
+        self.post_to_a_chat()
+        self.store.execute(
+            "INSERT INTO history(id, thread_id, direction, text, sent_at, "
+            "origin, created_at) VALUES('h1','th1','inbound','старое',?,"
+            "'import',?)", (now(), now()))
+        self.store.commit()
+        self.assertFalse(self.answers("Здравствуйте, что там по моей заявке?"))
+
+    def test_other_surfaces_are_not_this_rule(self):
+        """В чате и в личке канала у нас есть своя отправка — правило не нужно."""
+        self.post_to_a_chat()
+        for surface in ("channel_dm", "public_chat"):
+            with self.subTest(surface=surface):
+                self.assertFalse(self.answers("Здравствуйте, интересно",
+                                              surface))
+
+    def test_the_gate_lets_such_a_person_through(self):
+        """Сквозная проверка: именно `skip_reason` перестаёт его отсекать."""
+        from bridge49.config import Limits, Settings
+
+        settings = Settings(home=Path(self.tmp.name),
+                            db_path=Path(self.tmp.name) / "b.sqlite",
+                            dsn=None, limits=Limits(), timezone="Europe/Moscow")
+        message = self.inbound("Михаил, еще раз здравствуйте, посоветую "
+                               "Азию Под Капотом")
+        message["sent_at"] = now()
+        self.assertEqual(
+            autoreply.skip_reason(self.store, message, self.thread, settings),
+            "входящее от постороннего")
+        self.post_to_a_chat()
+        self.assertEqual(
+            autoreply.skip_reason(self.store, message, self.thread, settings),
+            "")
