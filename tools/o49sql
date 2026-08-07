@@ -1,11 +1,23 @@
 #!/bin/sh
-# Прямой SQL по БОЕВОЙ базе. Без аргументов — интерактивная оболочка.
+# Прямой SQL. По умолчанию — БОЕВАЯ база, с `--lab` — копия песочницы.
 #
-#   o49sql                                   # оболочка
-#   o49sql .tables                           # список таблиц
-#   o49sql "select * from inbound limit 5"   # запрос
+#   o49sql                                   # оболочка по боевой
+#   o49sql .tables
+#   o49sql "select * from inbound limit 5"
+#   o49sql --lab "select * from tasks limit 5"   # по своей копии
 #
 # Полезные таблицы: inbound (входящие от Radar), history (переписка),
 # threads (диалоги), tasks (что отправлено), handoffs (карточки менеджеру),
-# events (журнал: kind='autoreply.*'), direct_invites, demo_invites.
-exec sqlite3 -box /opt/outreach49/var/bridge49.sqlite "$@"
+# events (журнал), direct_invites, demo_invites.
+#
+# Решения движка лежат в events; actor там 'cli' или 'autoreply' в зависимости
+# от того, чем запущен разбор, поэтому отбирать надо по kind:
+#   select at, kind, detail from events
+#    where kind like 'autoreply.%' and kind <> 'autoreply.run'
+#    order by id desc limit 20;
+DB=/opt/outreach49/var/bridge49.sqlite
+if [ "$1" = "--lab" ]; then
+    DB=/opt/outreach49-lab/var/bridge49.sqlite
+    shift
+fi
+exec sqlite3 -box "$DB" "$@"
