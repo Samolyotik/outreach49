@@ -446,6 +446,47 @@ def pending_carries_letter(store: Store, pending: Any) -> bool:
     return carries_demo is not None
 
 
+def replaceable(store: Store, pending: Any) -> bool:
+    """Можно ли заменить этот ответ свежим. Только чтение, ничего не меняет.
+
+    Отдельно от `supersede_pending_reply`, потому что тот же вопрос задаётся
+    ещё до вызова модели: если заменить нельзя, ход всё равно отложится, и
+    платить за это полным вызовом каждые двадцать секунд незачем.
+
+    Заменяем только то, чего наша сторона ещё не касалась: задача `planned`,
+    без конверта и без письма со ссылкой. Как только команда ушла в Radar,
+    отменять нечего — сообщение уже в пути.
+    """
+    if str(pending["state"]) != "planned":
+        return False
+    if pending["request_id"] or pending["command_id"]:
+        return False
+    return not pending_carries_letter(store, pending)
+
+
+def unclosed_reply(store: Store, thread: Any) -> dict | None:
+    """Ответ, который свежим не заменить. None — ставить новый можно.
+
+    Зовётся разбором входящих перед вызовом модели. Черновик, который просто
+    заменится, здесь намеренно НЕ считается помехой: собеседник, дописавший
+    мысль вторым сообщением, обязан получить пересобранный ответ, а не отказ.
+    """
+    contact_id = str((thread or {}).get("contact_id") or "").strip()
+    if not contact_id:
+        return None
+    pending = store.one(
+        "SELECT id, state, request_id, command_id, contact_id, created_at, "
+        "       dispatched_at FROM tasks "
+        " WHERE campaign_id = ? AND contact_id = ? "
+        "   AND state IN ('planned', 'queued') "
+        " ORDER BY created_at DESC, id DESC",
+        (AUTO_CAMPAIGN_ID, contact_id),
+    )
+    if pending is None or replaceable(store, pending):
+        return None
+    return dict(pending)
+
+
 def supersede_pending_reply(store: Store, pending: Any, *,
                             actor: str = "autoreply") -> bool:
     """Снять ещё не ушедший ответ, чтобы поставить вместо него свежий.
@@ -463,11 +504,7 @@ def supersede_pending_reply(store: Store, pending: Any, *,
     Письмо со ссылкой не трогаем никогда: это не черновик, а то, ради чего
     человек и писал. Пусть уходит, а на новое сообщение ответим следующим.
     """
-    if str(pending["state"]) != "planned":
-        return False
-    if pending["request_id"] or pending["command_id"]:
-        return False
-    if pending_carries_letter(store, pending):
+    if not replaceable(store, pending):
         return False
     cursor = store.execute(
         "UPDATE tasks SET state = 'cancelled', updated_at = ? "
@@ -558,14 +595,24 @@ def queue_reply(
     if pending is not None and not (
         supersede and supersede_pending_reply(store, pending, actor=actor)
     ):
-        if supersede and pending_carries_letter(store, pending):
-            # «Рано», а не «сбой»: письмо со ссылкой снимать нельзя, но и
-            # хоронить из-за него вопрос человека незачем. Диспетчер заберёт
-            # письмо в ближайшие пару тиков, и следующий проход ответит.
+        if supersede:
+            # Замену просила машина, и она не состоялась. Причин у этого ровно
+            # четыре, и все четыре временные: ответ уже ушёл в Radar
+            # (`queued`), за ним закреплён конверт, он везёт ссылку, или его
+            # забрал диспетчер между проверкой и записью. Через тик-другой
+            # предыдущий ответ закроется, и следующий проход ответит спокойно.
+            #
+            # Раньше здесь была общая ошибка, и она стоила человеку сообщения:
+            # разбор помечал входящее разобранным и заводил карточку
+            # «autoreply_failed», выглядящую как поломка. 07.08 так пропал
+            # вопрос собеседника, написавшего дважды за десять секунд на два
+            # наших аккаунта: ответ на первое сообщение был в пути ровно две
+            # минуты, и второе попало в это окно.
             raise ReplyPending(
-                f"письмо со ссылкой ещё не ушло ({pending['id']}); "
-                "ответим следующим ходом"
+                f"предыдущий ответ ещё не закрыт ({pending['id']}, "
+                f"{pending['state']}); ответим следующим ходом"
             )
+        # У человека отказ информативен: он должен знать, что ответ уже ждёт.
         raise ReplyError(
             f"этому собеседнику уже поставлен ответ ({pending['id']}); "
             "дождитесь отправки или снимите задачу"
@@ -604,6 +651,15 @@ def queue_reply(
         # ошибку базы. Иначе автоответ заведёт менеджеру карточку о
         # несуществующем сбое — ровно как это было 04.08 с ложным отказом.
         store.conn.rollback()
+        if supersede:
+            # Машине проигранная гонка — это «рано», ровно как и всё остальное
+            # выше: чужой ответ уже поставлен и вот-вот уйдёт. Общая ошибка
+            # здесь дала бы карточку о несуществующем сбое, о чём и написано
+            # абзацем выше.
+            raise ReplyPending(
+                "ответ этому собеседнику поставил кто-то другой (гонка); "
+                "ответим следующим ходом"
+            ) from exc
         raise ReplyError(
             "этому собеседнику уже поставлен ответ (гонка при постановке); "
             "дождитесь отправки или снимите задачу"

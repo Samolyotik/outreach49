@@ -195,12 +195,48 @@ class HandoffRefreshTests(unittest.TestCase):
                             "без новой отметки времени форум не поднимет её")
 
     def test_empty_reason_does_not_erase_the_old_one(self):
+        """Прежнюю заметку не теряем — но и не выдаём за объяснение нового.
+
+        Подмена пустой заметки старой выглядела безобидно, а получалось
+        враньё: 06.08 разговор упал во второй раз, и менеджер увидел причину
+        от 05.08, которой в тот день не было вовсе. Поэтому старый текст
+        остаётся, но помечен как прежний и со своей датой.
+        """
         first = autoreply.open_handoff(self.store, self.thread, "reply_and_handoff",
                                        "исходная заметка")
         autoreply.open_handoff(self.store, self.thread, "", "")
         row = dict(self.store.one("SELECT * FROM handoffs WHERE id=?", (first,)))
         self.assertEqual(row["reason"], "reply_and_handoff")
-        self.assertEqual(row["note"], "исходная заметка")
+        self.assertIn("исходная заметка", row["note"])
+        self.assertIn("подробностей этого отказа не записано", row["note"])
+        self.assertIn("прежняя заметка", row["note"])
+
+    def test_the_marker_never_nests_into_itself(self):
+        """Повторный отказ без причины не должен растить заметку.
+
+        У @anrri21 06.08 ход повторился два с половиной десятка раз. Без этой
+        проверки заметка выросла бы в километр «прежняя: прежняя: прежняя», а
+        настоящий текст уехал бы в самый хвост.
+        """
+        first = autoreply.open_handoff(self.store, self.thread,
+                                       "hold_for_review", "исходная заметка")
+        seen = set()
+        for _ in range(5):
+            autoreply.open_handoff(self.store, self.thread, "hold_for_review", "")
+            seen.add(dict(self.store.one(
+                "SELECT note FROM handoffs WHERE id=?", (first,)))["note"])
+        self.assertEqual(len(seen), 1, f"заметка растёт: {seen}")
+        note = seen.pop()
+        self.assertEqual(note.count("подробностей этого отказа не записано"), 1)
+        self.assertIn("исходная заметка", note)
+
+    def test_a_card_without_any_note_says_so(self):
+        first = autoreply.open_handoff(self.store, self.thread, "hold_for_review")
+        row = dict(self.store.one("SELECT * FROM handoffs WHERE id=?", (first,)))
+        self.assertIsNone(row["note"])
+        autoreply.open_handoff(self.store, self.thread, "hold_for_review")
+        row = dict(self.store.one("SELECT * FROM handoffs WHERE id=?", (first,)))
+        self.assertEqual(row["note"], "подробностей этого отказа не записано")
 
 
 

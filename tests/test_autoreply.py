@@ -1348,19 +1348,41 @@ class FollowUpMessageTests(unittest.TestCase):
             self.second(supersede=True)
         self.assertEqual(self.state(self.first), "planned")
 
-    def test_a_plain_draft_is_still_an_ordinary_refusal(self):
-        """Отложить можно только письмо со ссылкой, а не любой отказ.
+    def test_an_answer_already_on_its_way_defers_the_turn(self):
+        """Ответ ушёл в Radar — значит «рано», а не «сбой».
 
-        Иначе `ReplyPending` стал бы общим ответом на всё, и настоящий затор —
-        задача, ушедшая в Radar, — тоже перестал бы доходить до человека.
+        Снять его нельзя: сообщение уже в пути. Но и хоронить из-за этого
+        вопрос человека незачем — через минуту-другую исход подтвердится, и
+        следующий проход ответит. 07.08 на этом пропал вопрос собеседника,
+        написавшего дважды за десять секунд на два наших аккаунта.
         """
         self.store.execute(
             "UPDATE tasks SET state = 'queued' WHERE id = ?", (self.first,))
         self.store.commit()
         self.add_inbound(5002, "ещё уточнение")
-        with self.assertRaises(replies.ReplyError) as caught:
+        with self.assertRaises(replies.ReplyPending):
             self.second(supersede=True)
-        self.assertNotIsInstance(caught.exception, replies.ReplyPending)
+        self.assertEqual(self.state(self.first), "queued", "чужой ответ не тронут")
+
+    def test_the_machine_never_gets_a_hard_refusal(self):
+        """Разбор входящих отказ не читает — он его роняет карточкой.
+
+        Поэтому у машины отказа быть не должно вовсе: любая причина, по
+        которой замена не состоялась, временная. Жёсткий отказ остаётся
+        человеку, которому он информативен.
+        """
+        for number, (state, envelope) in enumerate(
+                (("queued", None), ("planned", "конверт")), start=5002):
+            with self.subTest(state=state, envelope=bool(envelope)):
+                self.store.execute("DELETE FROM tasks WHERE id <> ?",
+                                   (self.first,))
+                self.store.execute(
+                    "UPDATE tasks SET state = ?, request_id = ? WHERE id = ?",
+                    (state, envelope, self.first))
+                self.store.commit()
+                self.add_inbound(number, "ещё уточнение")
+                with self.assertRaises(replies.ReplyPending):
+                    self.second(supersede=True)
 
     def test_manual_replies_still_refuse(self):
         """У человека отказ информативен: он должен знать, что ответ уже ждёт."""
@@ -1603,3 +1625,164 @@ class DemoRouteTests(unittest.TestCase):
         again = self.apply()
         self.assertEqual(again["demo"], "")
         self.assertEqual(again["handoff"], "")
+
+
+class PendingReplyGateTests(unittest.TestCase):
+    """Пока предыдущий ответ не закрыт, второй ход откладывается.
+
+    Отложить его надо ДО модели: вызов идёт полминуты и стоит денег, а разбор
+    тикает раз в двадцать секунд. Проверять после значит платить за отказ
+    каждый тик.
+
+    Черновик, который ещё можно заменить, помехой не считается: собеседник,
+    дописавший мысль вторым сообщением, обязан получить пересобранный ответ.
+    """
+
+    def setUp(self):
+        from bridge49.config import Limits, Settings
+
+        self.tmp = tempfile.TemporaryDirectory()
+        tmp = Path(self.tmp.name)
+        self.store = Store(tmp / "b.sqlite")
+        accounts_mod.sync(self.store, SNAPSHOT)
+        self.settings = Settings(
+            home=tmp, db_path=tmp / "b.sqlite", dsn=None, limits=Limits(),
+            timezone="Europe/Moscow",
+        )
+        (tmp / "var").mkdir(parents=True, exist_ok=True)
+        self.settings.autoreply_file.touch()
+
+        contact = entities.add_contact(self.store, username="someone",
+                                       segment="inbound", actor="test")
+        self.contact_id = contact["id"]
+        self.thread_id = new_id("thread")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES(?,821,'@someone',?,'private_dm','open',?,?)",
+            (self.thread_id, self.contact_id, now(), now()))
+        # Разговор начали мы — иначе сработает гейт постороннего.
+        self.store.execute(
+            "INSERT INTO history(id, thread_id, direction, text, sent_at, "
+            "origin, created_at) VALUES('h1',?,'outbound','первое касание',?,"
+            "'test',?)", (self.thread_id, now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(9001,821,'private_dm','@someone','someone',?,?,'{}',?)",
+            ("а сколько это стоит?", "2026-08-07T08:00:00+00:00",
+             "2026-08-07T08:00:00+00:00"))
+        self.store.commit()
+        replies.ensure_reply_campaign(
+            self.store, replies.AUTO_CAMPAIGN_ID, replies.AUTO_CAMPAIGN_NAME,
+            "служебная: автоответы на входящие")
+        self.store.commit()
+
+    def tearDown(self):
+        self.store.close()
+        self.tmp.cleanup()
+
+    def exploding_model(self):
+        def caller(*args, **kwargs):
+            raise AssertionError("модель звать не должны: ход откладывается")
+        return caller
+
+    def add_reply(self, state: str) -> str:
+        task_id = new_id("task")
+        self.store.execute(
+            "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
+            "params, mode, scheduled_at, state, created_at, updated_at) "
+            "VALUES(?,?,?,821,'reply_private_dm','{\"text\":\"ответ\"}',"
+            "'immediate',?,?,?,?)",
+            (task_id, replies.AUTO_CAMPAIGN_ID, self.contact_id, now(), state,
+             now(), now()))
+        self.store.commit()
+        return task_id
+
+    def test_an_answer_in_flight_defers_the_turn_before_the_model(self):
+        self.add_reply("queued")
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+        self.assertEqual(result["deferred"], 1)
+        self.assertEqual(result["handled"], 0, "входящее ещё не разобрано")
+        self.assertEqual(result["failed"], 0, "это не сбой")
+        row = self.store.one("SELECT handled FROM inbound WHERE id = 9001")
+        self.assertEqual(row["handled"], 0, "ход вернётся следующим тиком")
+        self.assertIsNone(self.store.one("SELECT id FROM handoffs"),
+                          "карточки быть не должно")
+
+    def test_a_replaceable_draft_does_not_defer(self):
+        """Дописанное вторым сообщением обязано пересобирать ответ, а не ждать."""
+        self.add_reply("planned")
+        called = []
+
+        def caller(*args, **kwargs):
+            called.append(1)
+            raise RuntimeError("до конца хода не идём")
+
+        result = autoreply.run(self.store, self.settings, llm_caller=caller)
+        self.assertEqual(result["deferred"], 0)
+        self.assertTrue(called, "модель обязана быть вызвана")
+
+    def test_a_stuck_answer_stops_being_waited_for(self):
+        """У отсрочки обязана быть верхняя граница.
+
+        Выход из `queued` один — `poll_results`, и таймаута у него нет. Ответ,
+        по которому Radar не вернул исход, висит вечно, и без границы человек
+        не получал бы ни ответа, ни карточки. Настойчивому — никогда: каждое
+        новое сообщение обнуляет счётчик давности входящего.
+        """
+        task_id = self.add_reply("queued")
+        self.store.execute(
+            "UPDATE tasks SET dispatched_at = ? WHERE id = ?",
+            ("2026-08-07T00:00:00+00:00", task_id))
+        self.store.commit()
+        result = autoreply.run(self.store, self.settings,
+                               llm_caller=self.exploding_model())
+        self.assertEqual(result["deferred"], 0)
+        self.assertEqual(result["skipped"], 1)
+        card = self.store.one("SELECT reason, note FROM handoffs")
+        self.assertEqual(card["reason"], "предыдущий ответ завис")
+        self.assertIn(task_id, card["note"])
+        self.assertIn("сколько это стоит", card["note"], "вопрос человека в карточке")
+        row = self.store.one("SELECT handled FROM inbound WHERE id = 9001")
+        self.assertEqual(row["handled"], 1, "слот обязан освободиться")
+
+    def test_deferred_turns_do_not_eat_the_pass_budget(self):
+        """Отложенный ход не тратит слот прохода.
+
+        Он остаётся неразобранным и следующим тиком снова стоит в голове
+        очереди по id. Засчитывать его за слот значило бы: двадцать залипших
+        собеседников занимают весь лимит, и разбор встаёт для всех остальных.
+        """
+        self.add_reply("queued")
+        # Второй собеседник, у которого никаких помех нет.
+        other = entities.add_contact(self.store, username="second",
+                                     segment="inbound", actor="test")
+        self.store.execute(
+            "INSERT INTO threads(id, account_id, peer_key, contact_id, surface, "
+            "state, created_at, updated_at) "
+            "VALUES('th2',821,'@second',?,'private_dm','open',?,?)",
+            (other["id"], now(), now()))
+        self.store.execute(
+            "INSERT INTO history(id, thread_id, direction, text, sent_at, "
+            "origin, created_at) VALUES('h2','th2','outbound','касание',?,"
+            "'test',?)", (now(), now()))
+        self.store.execute(
+            "INSERT INTO inbound(id, account_id, surface, peer_key, "
+            "peer_username, text, sent_at, raw, created_at) "
+            "VALUES(9002,821,'private_dm','@second','second',?,?,'{}',?)",
+            ("а мне расскажете?", "2026-08-07T08:00:00+00:00",
+             "2026-08-07T08:00:00+00:00"))
+        self.store.commit()
+
+        reached = []
+
+        def caller(*args, **kwargs):
+            reached.append(1)
+            raise RuntimeError("до конца хода не идём")
+
+        result = autoreply.run(self.store, self.settings, limit=1,
+                               llm_caller=caller)
+        self.assertEqual(result["deferred"], 1, "первый отложен")
+        self.assertTrue(reached, "второй обязан дойти до модели, а не ждать")
