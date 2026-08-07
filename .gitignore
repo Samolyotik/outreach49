@@ -1,4 +1,5 @@
 venv/
 var/
+runtime/
 __pycache__/
 *.pyc
