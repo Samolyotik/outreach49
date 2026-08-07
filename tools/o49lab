@@ -7,12 +7,34 @@
 set -e
 LAB=/opt/outreach49-lab
 
-set -a
-[ -r /etc/tgradar-outreach/production.env ] && . /etc/tgradar-outreach/production.env
-[ -r /etc/tgradar-outreach/startbot.env ] && . /etc/tgradar-outreach/startbot.env
-[ -r "$LAB/deployment/sector.env" ] && . "$LAB/deployment/sector.env"
-[ -r "$LAB/deployment/llm.env" ] && . "$LAB/deployment/llm.env"
-set +a
+# Файлы окружения здесь в формате systemd, а не shell: значение со пробелами
+# пишется без кавычек. `. файл` на такой строке пытается ЗАПУСТИТЬ хвост как
+# команду — именно так `OUTREACH_LLM_COMMAND=<python> <скрипт>` из
+# production.env падал с «Permission denied». Поэтому разбираем сами.
+load_env() {
+    if [ ! -r "$1" ]; then
+        return 0
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+        '' | \#*) continue ;;
+        *=*) ;;
+        *) continue ;;
+        esac
+        key=${line%%=*}
+        val=${line#*=}
+        case "$val" in
+        \"*\") val=${val#\"}; val=${val%\"} ;;
+        \'*\') val=${val#\'}; val=${val%\'} ;;
+        esac
+        export "$key=$val"
+    done <"$1"
+}
+
+load_env /etc/tgradar-outreach/production.env
+load_env /etc/tgradar-outreach/startbot.env
+load_env "$LAB/deployment/sector.env"
+load_env "$LAB/deployment/llm.env"
 
 export BRIDGE49_HOME="$LAB"
 export OUTREACH_SECTOR_CATALOG="$LAB/deployment/sector-catalog.json"
