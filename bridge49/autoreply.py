@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import accounts as accounts_mod
+from . import dialogs
 from . import direct_invite
 from . import outreach_texts
 from . import replies
@@ -220,7 +221,50 @@ def conversation_history(store: Store, thread: dict) -> list[dict[str, str]]:
     # том порядке — пока только в перенесённых тредах, но модель читает её как
     # ход разговора.
     rows.sort(key=lambda item: _sort_key(item[0]))
-    return [item for _stamp, item in rows if item["text"].strip()]
+    rows = _after_reset(store, thread, rows)
+    # Управляющие команды в переписку не входят никогда. Это не реплика
+    # собеседника, а обращение к контуру, и модели её читать незачем — тем
+    # более что она стоит ровно на границе сброса.
+    return [item for _stamp, item in rows
+            if item["text"].strip()
+            and dialogs.parse_reset_command(item["text"]) is None]
+
+
+def _after_reset(
+    store: Store, thread: dict, rows: list[tuple[str, dict[str, str]]]
+) -> list[tuple[str, dict[str, str]]]:
+    """Отрезать переписку до отметки сброса (`dialogs.reset_thread`).
+
+    Первое касание при этом возвращается на место: без него следующий тест
+    читается неправильно — входящее приходит будто от постороннего, и перечень
+    услуг собеседника выглядит рекламой. Убрать и его просит `--full`.
+
+    Нечитаемое время не прячем. Такой строки быть не должно вовсе, но если она
+    есть, спрятать её значит показать модели разговор с дырой посередине, а
+    это хуже, чем лишняя реплика.
+
+    Граница включающая: реплика, пришедшая в ту же секунду, что и сброс,
+    остаётся видна. Время у нас с точностью до секунды (`store.now`), и строгая
+    граница прятала бы **новое** сообщение, попавшее в секунду сброса, — то
+    есть первый ход теста уезжал бы в модель без своего же текста. Обратная
+    ошибка дешевле: лишней в этом окне может оказаться разве что реплика,
+    написанная в ту же секунду, что и команда сброса.
+    """
+    cut = str(thread.get("reset_at") or "")
+    if not cut:
+        return rows
+    fresh = [item for item in rows if _sort_key(item[0]) >= _sort_key(cut)]
+    if str(thread.get("reset_scope") or "") == dialogs.SCOPE_FULL:
+        return fresh
+    touch = dialogs.first_touch(store, thread)
+    if touch is None or _sort_key(str(touch["sent_at"])) >= _sort_key(cut):
+        # Второй случай — касание и так свежее отметки, оно уже в списке.
+        return fresh
+    return [(str(touch["sent_at"]), {
+        "direction": "outbound",
+        "text": str(touch["text"]),
+        "created_at": str(touch["sent_at"]),
+    })] + fresh
 
 
 def _sort_key(stamp: str):
@@ -275,13 +319,21 @@ def auto_reply_count(store: Store, thread: dict) -> int:
 
     Движку это нужно, чтобы вовремя предложить подключить живого коллегу, а не
     отвечать бесконечно.
+
+    Отметку сброса считаем наравне с перепиской: разговор, которого модель не
+    видит, не должен и торопить её звать человека. Иначе первый же ход после
+    сброса пришёлся бы на счётчик прошлого теста.
     """
-    row = store.one(
-        "SELECT COUNT(*) AS n FROM tasks "
+    rows = store.query(
+        "SELECT dispatched_at FROM tasks "
         "WHERE campaign_id = ? AND contact_id = ? AND state = 'done'",
         (replies.AUTO_CAMPAIGN_ID, thread["contact_id"]),
     )
-    return int(row["n"]) if row else 0
+    cut = str(thread.get("reset_at") or "")
+    if not cut:
+        return len(rows)
+    return sum(1 for row in rows
+               if _sort_key(str(row["dispatched_at"] or "")) > _sort_key(cut))
 
 
 def discovery_context(thread: dict) -> dict[str, str]:
@@ -1040,6 +1092,47 @@ def skip_reason(store: Store, inbound: dict, thread: dict, settings) -> str:
     return ""
 
 
+def control_reset(
+    store: Store, inbound: dict, thread: dict | None, settings,
+    *, actor: str = "autoreply",
+) -> bool:
+    """Было ли это управляющей командой, и если да — исполнить её.
+
+    Живая проверка автоответов идёт с настоящего аккаунта, и после каждого
+    прогона диалог надо возвращать в исходное состояние. Из консоли это
+    неудобно: тест идёт с телефона. Поэтому тот же сброс вызывается сообщением
+    в самом диалоге.
+
+    Два гейта, и оба обязательны. Команда — это всё сообщение целиком
+    (`dialogs.parse_reset_command`), и собеседник — из белого списка
+    `var/TEST_PEERS`. Совпало только первое — не наш случай: возвращаем `False`,
+    и ход идёт обычным путём, будто ничего не распознали. Стирать историю
+    живого разговора по слову, набранному лидом, нельзя ни при каких условиях.
+
+    Подтверждение уходит в топик тревог, а не в диалог. Ответ «сброшено» стал
+    бы первой репликой следующего теста — то есть ровно тем, что мы только что
+    убрали.
+    """
+    command = dialogs.parse_reset_command(str(inbound.get("text") or ""))
+    if command is None:
+        return False
+    if not dialogs.peer_allowed(inbound, settings):
+        store.log(actor, "dialog.reset.refused", str(inbound["id"]),
+                  f"{inbound.get('peer_key')} не в белом списке")
+        store.commit()
+        return False
+    if thread is None:
+        # Сбрасывать нечего, но и в модель это отправлять незачем.
+        store.log(actor, "dialog.reset.empty", str(inbound["id"]),
+                  f"нет диалога с {inbound.get('peer_key')}")
+        store.commit()
+        return True
+    summary = dialogs.reset_thread(
+        store, thread, full=command.full, actor=actor)
+    dialogs.announce_reset(summary, inbound=inbound, actor=actor, store=store)
+    return True
+
+
 def reply_moment(inbound: dict, settings) -> str:
     """Когда выпускать ответ: спустя паузу на чтение от самого входящего.
 
@@ -1123,6 +1216,11 @@ def pending(store: Store, limit: int = 20, *, at: str | None = None) -> list[dic
 
 def _turn_is_closed(store: Store, newest: dict, oldest: dict, stamp: str) -> bool:
     """Закончил ли собеседник мысль."""
+    if dialogs.parse_reset_command(str(newest.get("text") or "")) is not None:
+        # Управляющая команда — законченная мысль по определению. Ждать после
+        # неё сорок пять секунд тишины незачем: дописывать к ней нечего, а
+        # тестировщик за это время успевает решить, что команда не работает.
+        return True
     quiet = _age_seconds(newest.get("sent_at") or newest.get("created_at"), stamp)
     if quiet is None or quiet >= TURN_QUIET:
         # Неразобранная отметка не должна задерживать ответ.
@@ -1186,6 +1284,7 @@ def run(
     branch_config = direct_invite.BranchConfig.from_env()
 
     handled = queued = failed = invited = skipped = demoed = deferred = 0
+    controls = 0
     # Бюджет прохода тратят только доработанные ходы. Отложенный остаётся
     # неразобранным, то есть следующим тиком снова стоит в голове очереди по
     # id — и если засчитывать его за слот, двадцать отсрочек занимают весь
@@ -1198,6 +1297,15 @@ def run(
         if handled >= limit:
             break
         thread = thread_for(store, inbound)
+        if control_reset(store, inbound, thread, settings, actor=actor):
+            # Команда тестировщика, а не разговор. Модель не зовём и карточку
+            # не заводим: отвечать здесь не на что.
+            store.execute("UPDATE inbound SET handled = 1 WHERE id = ?",
+                          (int(inbound["id"]),))
+            store.commit()
+            controls += 1
+            handled += 1
+            continue
         reason = skip_reason(store, inbound, thread, settings) if thread else ""
         if reason:
             # Модель даже не зовём: отвечать тут нечего, а вызов стоит денег и
@@ -1301,8 +1409,8 @@ def run(
     store.log(actor, "autoreply.run", "",
               f"разобрано={handled} поставлено={queued} ошибок={failed} "
               f"пропущено={skipped} отложено={deferred} тестов={invited} "
-              f"демо={demoed}")
+              f"демо={demoed} команд={controls}")
     store.commit()
     return {"enabled": True, "handled": handled, "queued": queued,
             "failed": failed, "skipped": skipped, "deferred": deferred,
-            "invited": invited, "demo": demoed}
+            "invited": invited, "demo": demoed, "controls": controls}

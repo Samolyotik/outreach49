@@ -469,6 +469,35 @@ class Settings:
         return self.autoreply_strangers_file.exists()
 
     @property
+    def test_peers_file(self) -> Path:
+        """Кому позволено управлять контуром прямо из диалога.
+
+        По строке на собеседника: `@ник` или `id:123`. Пустые строки и строки
+        с решётки — комментарии.
+
+        Файла нет — управляющие команды не работают вовсе, и это правильное
+        умолчание: единственный их потребитель это тестировщик, а цена ошибки
+        — стёртая история живого разговора.
+        """
+        return self.home / "var" / "TEST_PEERS"
+
+    @property
+    def test_peers(self) -> frozenset[str]:
+        path = self.test_peers_file
+        if not path.exists():
+            return frozenset()
+        peers = set()
+        for line in path.read_text(encoding="utf-8").splitlines():
+            token = line.split("#", 1)[0].strip().lower()
+            if not token:
+                continue
+            if token.startswith("id:") or token.lstrip("-").isdigit():
+                peers.add(token if token.startswith("id:") else f"id:{token}")
+            else:
+                peers.add(f"@{token.lstrip('@')}")
+        return frozenset(peers)
+
+    @property
     def accounts_snapshot(self) -> Path:
         return self.home / "accounts.json"
 

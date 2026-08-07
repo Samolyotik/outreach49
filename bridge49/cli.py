@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 from . import accounts as accounts_mod
-from . import (alerts, autoreply, catalog, config, daemon, direct_invite,
-               dispatcher, entities, forum, planner, pollers, replies, report,
-               research, watchdog)
+from . import (alerts, autoreply, catalog, config, daemon, dialogs,
+               direct_invite, dispatcher, entities, forum, planner, pollers,
+               replies, report, research, watchdog)
 from .radar import RadarBridge
 from .store import Store, loads, now
 
@@ -986,6 +986,84 @@ def cmd_send(args) -> int:
     return 0
 
 
+def cmd_dialog(args) -> int:
+    """Сброс диалога для повторного теста автоответов.
+
+    Отправкой не пахнет ни одна ветка: сброс только помечает и снимает
+    незакрытое, посев только пишет в нашу базу.
+    """
+    settings = _settings(args)
+    with _store(settings) as store:
+        try:
+            thread = replies.find_thread(
+                store, thread_id=args.thread,
+                account_id=args.account, peer=args.peer,
+            )
+        except replies.ReplyError as exc:
+            print(report.bad(str(exc)))
+            return 1
+
+        if args.op == "undo":
+            if dialogs.undo_reset(store, thread, actor=args.actor):
+                print(report.good("отметка снята — переписка снова видна целиком"))
+            else:
+                print("на этом диалоге отметки сброса не было")
+            return 0
+
+        if args.op == "seed":
+            try:
+                seeded = dialogs.seed_first_touch(
+                    store, thread, days_ago=args.days_ago, actor=args.actor)
+            except dialogs.DialogError as exc:
+                print(report.bad(str(exc)))
+                return 1
+            print(report.kv([
+                ("задача", seeded["task"]),
+                ("действие", seeded["action"]),
+                ("отправлено", report.local_time(seeded["dispatched_at"],
+                                                 settings.timezone)),
+                ("сфера", seeded["sector"] or "— (из этого текста не выводится)"),
+            ]))
+            print(report.section("текст"))
+            print(seeded["text"])
+            return 0
+
+        plan = dialogs.plan_reset(store, thread)
+        if not args.dry_run:
+            plan = dialogs.reset_thread(
+                store, thread, full=args.full, actor=args.actor)
+        # Предпросмотр говорит о будущем, прогон — о прошедшем. Одна и та же
+        # формулировка на оба случая читалась бы как «уже сделано».
+        did = "будет закрыто" if args.dry_run else "закрыто"
+        took = "к снятию" if args.dry_run else "снято"
+        print(report.kv([
+            ("диалог", plan["thread"]),
+            ("объём", "вся переписка" if args.full
+             else "всё после первого касания"),
+            (f"входящих {did}", plan["unhandled_inbound"]),
+            (f"ответов {took}", len(plan["cancel_tasks"])),
+            (f"карточек {did}", len(plan["close_handoffs"])),
+            (f"персональных ссылок {took}", len(plan["cancel_invites"])),
+            (f"демо {took}", len(plan["cancel_demos"])),
+            ("отказ", ("будет снят" if args.dry_run else "снят")
+             if plan["opted_out"] else "не стоял"),
+        ]))
+        if plan["in_flight_tasks"]:
+            print(report.warn(
+                "не тронуты уже уехавшие в Radar ответы: "
+                + ", ".join(plan["in_flight_tasks"])
+                + " — они закроются сами, сбросьте ещё раз после этого"
+            ))
+        if plan["cancel_invites"]:
+            print(report.warn(
+                "выпущенные ссылки StartBot этим не отзываются — они остаются "
+                "действующими на его стороне"
+            ))
+        if args.dry_run:
+            print(report.warn("это только предпросмотр, ничего не изменено"))
+        return 0
+
+
 def cmd_threads(args) -> int:
     settings = _settings(args)
     with _store(settings) as store:
@@ -1405,6 +1483,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=50,
                    help="сколько последних сообщений показать")
     p.set_defaults(func=cmd_thread)
+
+    p = sub.add_parser(
+        "dialog", help="сбросить диалог, чтобы прогнать тест заново")
+    p.add_argument("op", choices=["reset", "undo", "seed"],
+                   help="reset — забыть переписку; undo — вернуть; "
+                        "seed — посадить первое касание")
+    p.add_argument("--thread", help="id диалога")
+    p.add_argument("--account", type=int, help="или пара: аккаунт")
+    p.add_argument("--peer", help="или пара: собеседник (@ник либо id:123)")
+    p.add_argument("--full", action="store_true",
+                   help="забыть и наше первое письмо (по умолчанию остаётся)")
+    p.add_argument("--days-ago", type=int, default=3,
+                   help="каким числом датировать посеянное письмо")
+    p.add_argument("--dry-run", action="store_true",
+                   help="показать, что изменится, и ничего не менять")
+    p.set_defaults(func=cmd_dialog)
 
     p = sub.add_parser("handoffs", help="что ждёт менеджера")
     p.add_argument("--take", metavar="HANDOFF_ID")
