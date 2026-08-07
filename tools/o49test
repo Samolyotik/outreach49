@@ -1,0 +1,14 @@
+#!/bin/sh
+# Тесты песочницы. Без аргументов — все; с аргументом — по имени модуля.
+#
+#   o49test                          # всё
+#   o49test tests.test_presales_v2   # один файл
+set -e
+LAB=/opt/outreach49-lab
+cd "$LAB"
+export PYTHONPATH="$LAB"
+export BRIDGE49_HOME="$LAB"
+if [ $# -eq 0 ]; then
+    exec venv/bin/python -m unittest discover -s tests -t . -v
+fi
+exec venv/bin/python -m unittest "$@" -v

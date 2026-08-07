@@ -1,0 +1,11 @@
+#!/bin/sh
+# Прямой SQL по БОЕВОЙ базе. Без аргументов — интерактивная оболочка.
+#
+#   o49sql                                   # оболочка
+#   o49sql .tables                           # список таблиц
+#   o49sql "select * from inbound limit 5"   # запрос
+#
+# Полезные таблицы: inbound (входящие от Radar), history (переписка),
+# threads (диалоги), tasks (что отправлено), handoffs (карточки менеджеру),
+# events (журнал: kind='autoreply.*'), direct_invites, demo_invites.
+exec sqlite3 -box /opt/outreach49/var/bridge49.sqlite "$@"

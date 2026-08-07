@@ -1,0 +1,30 @@
+#!/bin/sh
+# Песочница автоответов: тот же контур, своя копия базы, отправок нет.
+#
+# Всё, что правится в песочнице — движок, обёртка, факты, словарь сфер, —
+# берётся из ЕЁ папки, а не из боевой. Иначе правка схемы ответа или словаря
+# не действует, и это не видно: прогон идёт, а изменения будто нет.
+set -e
+LAB=/opt/outreach49-lab
+
+set -a
+[ -r /etc/tgradar-outreach/production.env ] && . /etc/tgradar-outreach/production.env
+[ -r /etc/tgradar-outreach/startbot.env ] && . /etc/tgradar-outreach/startbot.env
+[ -r "$LAB/deployment/sector.env" ] && . "$LAB/deployment/sector.env"
+[ -r "$LAB/deployment/llm.env" ] && . "$LAB/deployment/llm.env"
+set +a
+
+export BRIDGE49_HOME="$LAB"
+export OUTREACH_SECTOR_CATALOG="$LAB/deployment/sector-catalog.json"
+export OUTREACH_LLM_COMMAND="$LAB/venv/bin/python $LAB/scripts/codex_llm_wrapper.py"
+export CODEX_LLM_USAGE_LOG="$LAB/runtime/codex_llm_usage.jsonl"
+
+# Выпуск одноразовых ссылок StartBot по умолчанию выключен: это внешнее
+# действие с настоящим следом, и тестовый прогон сжигал бы живые ссылки.
+# Нужен настоящий выпуск на один запуск:  O49LAB_STARTBOT=1 o49lab invites ...
+if [ -z "$O49LAB_STARTBOT" ]; then
+    export OUTREACH_STARTBOT_API_BASE_URL=""
+fi
+
+cd "$LAB"
+exec "$LAB/bin/bridge49" "$@"

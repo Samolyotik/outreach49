@@ -1,0 +1,21 @@
+#!/bin/sh
+# Обновить снимок боевой базы в песочнице.
+#
+# `.backup` снимает согласованную копию на живой базе, не мешая боевому
+# контуру писать. Делать это можно сколько угодно и когда угодно.
+set -e
+LIVE=/opt/outreach49/var/bridge49.sqlite
+LAB=/opt/outreach49-lab/var/bridge49.sqlite
+
+sqlite3 "$LIVE" ".backup '$LAB'"
+chmod a+rw "$LAB" 2>/dev/null || true
+
+printf 'снимок обновлён: %s\n' "$(date -Is)"
+sqlite3 "$LAB" "
+  select 'входящих        ' || count(*) from inbound
+  union all select 'переписки       ' || count(*) from history
+  union all select 'диалогов        ' || count(*) from threads
+  union all select 'автоответов     ' || count(*) from tasks where campaign_id='autoreplies'
+  union all select 'карточек        ' || count(*) from handoffs
+  union all select 'решений движка  ' || count(*) from events where kind like 'autoreply.%' and kind <> 'autoreply.run';
+"
