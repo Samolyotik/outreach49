@@ -1,14 +1,39 @@
 #!/bin/sh
-# Тесты песочницы. Без аргументов — все; с аргументом — по имени модуля.
+# Тесты песочницы.
 #
-#   o49test                          # всё
-#   o49test tests.test_presales_v2   # один файл
+#   o49test                       # все файлы
+#   o49test tests/test_presales_v2.py   # один
+#
+# Файлы гоняются по одному, а не через `unittest discover`: в `tests/` нет
+# `__init__.py`, и discover отказывается («Start directory is not importable»).
 set -e
 LAB=/opt/outreach49-lab
 cd "$LAB"
 export PYTHONPATH="$LAB"
 export BRIDGE49_HOME="$LAB"
-if [ $# -eq 0 ]; then
-    exec venv/bin/python -m unittest discover -s tests -t . -v
+PY="$LAB/venv/bin/python"
+
+if [ $# -gt 0 ]; then
+    exec "$PY" "$@"
 fi
-exec venv/bin/python -m unittest "$@" -v
+
+failed=""
+total=0
+for f in tests/test_*.py; do
+    total=$((total + 1))
+    if out=$("$PY" "$f" 2>&1); then
+        printf '  ok    %s\n' "$f"
+    else
+        printf '  ПАДАЕТ %s\n' "$f"
+        printf '%s\n' "$out" | tail -12 | sed 's/^/        /'
+        failed="$failed $f"
+    fi
+done
+
+echo
+if [ -z "$failed" ]; then
+    printf 'все %s файлов прошли\n' "$total"
+    exit 0
+fi
+printf 'падают:%s\n' "$failed"
+exit 1
