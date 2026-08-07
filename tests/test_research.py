@@ -770,10 +770,6 @@ class ReadPaceTests(unittest.TestCase):
         self.assertTrue(notes)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class MultiRoleMirrorTests(unittest.TestCase):
     """Аккаунт может нести несколько ролей — зеркало обязано помнить все.
 
@@ -818,3 +814,7 @@ class MultiRoleMirrorTests(unittest.TestCase):
         account = accounts_mod.get(self.store, 801)
 
         self.assertEqual(account["roles"], {"source_reader"})
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -294,10 +294,6 @@ class InFlightSendTests(unittest.TestCase):
         self.assertIn("МЫ НАПИСАЛИ", self.cards[0])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RoutingTests(unittest.TestCase):
     """Заявки и переписка живут в разных группах.
 
@@ -552,3 +548,7 @@ class HandoffHistoryTests(unittest.TestCase):
     def test_chain_is_capped_at_ten(self):
         """Договорённая граница: цепочка до десяти сообщений, не длиннее."""
         self.assertEqual(forum.HISTORY_LINES, 10)
+
+
+if __name__ == "__main__":
+    unittest.main()

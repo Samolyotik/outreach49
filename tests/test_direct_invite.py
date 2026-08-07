@@ -881,10 +881,6 @@ class FakeClient:
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OrphanRescueTests(unittest.TestCase):
     """Заявка, у которой ссылка есть, а везти её некому.
 
@@ -1473,3 +1469,7 @@ class ConsentLeftUnservedTests(unittest.TestCase):
         self.assertTrue(direct_invite.consent_left_unserved(
             bare, store=self.store, thread=self.thread,
             account_role="dm_sender"))
+
+
+if __name__ == "__main__":
+    unittest.main()

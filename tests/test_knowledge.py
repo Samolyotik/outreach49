@@ -134,10 +134,6 @@ class KnowledgeRetrievalTests(unittest.TestCase):
         self.assertIn("answer_cards/pricing.md", card_sources)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SectorNoteRoutingTests(unittest.TestCase):
     """Банкротство и общие юруслуги — две сферы с двумя тестовыми группами.
 
@@ -182,3 +178,7 @@ class SectorNoteRoutingTests(unittest.TestCase):
         found = self.retrieved("Интересны и общие юруслуги, и банкротство")
         self.assertIn(self.BANKRUPTCY, found)
         self.assertIn(self.LEGAL, found)
+
+
+if __name__ == "__main__":
+    unittest.main()

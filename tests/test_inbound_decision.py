@@ -160,10 +160,6 @@ class InboundDecisionTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DirectInviteSeamTests(unittest.TestCase):
     """Сфера, сопоставленная моделью, обязана доехать до решения.
 
@@ -243,3 +239,7 @@ class DirectInviteSeamTests(unittest.TestCase):
         self.assertTrue(direct_invite.consent_from_decision(decision))
         self.assertEqual(direct_invite.sector_from_decision(decision),
                          "logistics_ved_china")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -25,6 +25,16 @@ from .policy import MessageClassification
 CHAT_SENDER_PRIVATE_ENTRY_MODE = "chat_sender_private_after_public_chat"
 
 
+#: Владелец канала, которому мы написали, отвечает со своего личного аккаунта.
+#:
+#: Полоса «личка каналов» устроена не так, как «чаты», и путать их нельзя. В
+#: чат мы кладём крючок от лица покупателя, поэтому отвечающему там надо честно
+#: сказать, что подтверждённого заказа нет. Каналу же уходит прямое деловое
+#: предложение от нашего лица — разворачивать в нём нечего, и та же оговорка
+#: прозвучала бы выдумкой про заказ, которого никто не обсуждал.
+CHANNEL_SENDER_PRIVATE_ENTRY_MODE = "channel_sender_private_after_channel_dm"
+
+
 INBOUND_REFERRAL_CAMPAIGN_ID = "campaign_inbound_private_messages"
 
 
@@ -194,5 +204,22 @@ def build_llm_context(
             "if the person is not interested, return pause_conversation without arguing, another pitch or a follow-up",
             "if the person agrees to a free test, demo, manager contact or access, return manager_handoff",
             "when supported by the message, store sector, inbound_need, referral_source=public_chat_response and signal_type=supplier_response_to_chat_seed",
+        ]
+    if resolved_entry_mode == CHANNEL_SENDER_PRIVATE_ENTRY_MODE:
+        context["recent_public_chat_outreach"] = list(recent_public_chat_outreach or [])
+        context["public_chat_context_policy"] = (
+            "Recent letters belong to this sender account and all of them carry the same offer, "
+            "but they do not prove which channel this person owns or which wording reached them. "
+            "Use them as the subject of the conversation, never as facts about this person."
+        )
+        context["channel_sender_inbound_rules"] = [
+            "this sender account writes only to channel owners, and every letter it sends carries the same offer: we find in Telegram the messages of people looking for imported-car sourcing and are ready to show that demand for free",
+            "the person writes from a personal account and is in almost all cases the owner of a channel that received such a letter, so treat the inbound as an answer to that offer rather than as an unknown request",
+            "we are not pretending to be a buyer here and there is no seed request to disown: never say that there is no confirmed order and never apologise for writing",
+            "never state which channel, which letter or which wording reached this person, and never invent their geography, brands, volumes or business details",
+            "a short «заинтересовали», «интересно», «расскажите подробнее», «покажите» or «да» is interest in that offer: explain what ТГ РАДАР does and what the free look gives instead of asking what exactly interested them",
+            "asking the person what they are referring to reads as an account that does not remember its own letter; ask it only when the message plainly has nothing to do with the offer",
+            "keep the first reply short: what the service does, what the free look consists of, and exactly one question that leads to it",
+            "when supported by the message, store sector, inbound_need and referral_source=channel_dm_response",
         ]
     return context

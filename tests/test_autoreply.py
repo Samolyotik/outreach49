@@ -214,10 +214,6 @@ class AutoReplyTests(unittest.TestCase):
         self.assertEqual(history[1]["text"], "Сколько стоит?")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class AutoReplyRunTests(unittest.TestCase):
     """Проход разбора: очередь входящих, задержка, устойчивость к сбоям."""
 
@@ -1919,3 +1915,7 @@ class ChatPostReplyGateTests(unittest.TestCase):
         self.assertEqual(
             autoreply.skip_reason(self.store, message, self.thread, settings),
             "")
+
+
+if __name__ == "__main__":
+    unittest.main()

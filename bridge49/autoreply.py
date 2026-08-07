@@ -39,7 +39,11 @@ from . import outreach_texts
 from . import replies
 from .inbound_decision import decide_inbound_reply
 from .policy import inbound_language_reason, normalize_text
-from .presales_context import non_silent_boundary_reply
+from .presales_context import (
+    CHANNEL_SENDER_PRIVATE_ENTRY_MODE,
+    CHAT_SENDER_PRIVATE_ENTRY_MODE,
+    non_silent_boundary_reply,
+)
 from .store import Store, dumps, new_id, now
 
 #: Как мы представляемся движку. Он писался провайдер-нейтральным, чтобы один
@@ -315,6 +319,27 @@ def we_started_it(store: Store, thread: dict) -> bool:
     ) is not None
 
 
+def first_touch_of_its_own(store: Store, thread: dict) -> bool:
+    """Есть ли у этого разговора собственное начало — письмо этому контакту.
+
+    Не то же самое, что `we_started_it`. Тот отвечает на вопрос «говорили ли мы
+    в этом диалоге хоть раз» и потому засчитывает наши же ответы. Здесь вопрос
+    другой и неизменный во времени: с чего разговор НАЧАЛСЯ. Ответив человеку,
+    пришедшему с нашего письма каналу, мы не превращаем его в того, кому мы
+    писали лично, — а по `we_started_it` со второго хода выходило именно так, и
+    движок терял и полосу, и ветку теста ровно тогда, когда разговор пошёл.
+    """
+    if store.one("SELECT 1 FROM history WHERE thread_id = ? LIMIT 1",
+                 (thread["id"],)) is not None:
+        return True
+    return store.one(
+        "SELECT 1 FROM tasks WHERE contact_id = ? AND state = 'done' "
+        "  AND action IN ('send_private_dm', 'send_channel_dm', "
+        "                 'send_public_chat_message') LIMIT 1",
+        (thread["contact_id"],),
+    ) is not None
+
+
 def answered_our_public_touch(store: Store, inbound: dict, thread: dict) -> bool:
     """Похоже ли, что человек пишет в ответ на наше сообщение в чат или канал.
 
@@ -440,6 +465,74 @@ def outreach_sector_of_thread(store: Store, thread: dict) -> str:
     )
 
 
+#: Чем эта роль пишет МЕСТАМ. Роли, которой нечем, здесь нет.
+PUBLIC_TOUCH_ACTION = {
+    "chat_sender": "send_public_chat_message",
+    "channel_sender": "send_channel_dm",
+}
+
+#: Сколько наших писем показывать движку. Они у полосы почти одинаковы, и
+#: десяток отличается от тройки только шумом в промпте.
+PUBLIC_LETTERS_SHOWN = 3
+
+#: Сколько отправок просматривать в поисках подтверждённых. Ручные и чужие
+#: тексты отсеиваются посимвольной сверкой, поэтому запас нужен, но небольшой.
+PUBLIC_LETTERS_SCANNED = 20
+
+
+def our_public_letters(
+    store: Store, account_id: int, role: str, *, limit: int = PUBLIC_LETTERS_SHOWN
+) -> list[dict[str, str]]:
+    """Наши последние письма МЕСТАМ с этого аккаунта — то, на что человек отвечает.
+
+    Движок про них не знал вовсе. Ключ `recent_public_chat_outreach` в
+    контексте существует с самого переноса, но заполнять его было некому:
+    прежний контур собирал его у себя, а `build_context` эту часть не перенёс.
+    Из-за этого человек, написавший «Здравствуйте заинтересовали» в ответ на
+    наше письмо каналу, приезжал модели голым — без единого признака, что мы
+    вообще начинали разговор. 07.08 @vodopad_anhel получил в ответ «Подскажите,
+    что именно вас заинтересовало?» от аккаунта, который сам ему и написал.
+
+    Берём только подтверждённые посимвольно (`sector_of_first_touch`): текст
+    собирается из ника адресата детерминированно, поэтому совпадение доказывает
+    авторство. Ручная отправка и чужой текст сюда не попадут.
+
+    Действие берём по роли, а не «любое публичное»: полосы отвечают по-разному,
+    и письмо каналу, засчитанное чат-аккаунту, увело бы разговор в чужие
+    правила.
+    """
+    action = PUBLIC_TOUCH_ACTION.get(role, "")
+    if not action:
+        return []
+    letters: list[dict[str, str]] = []
+    for row in store.query(
+        "SELECT c.username, t.params, t.dispatched_at FROM tasks t "
+        "  JOIN contacts c ON c.id = t.contact_id "
+        " WHERE t.account_id = ? AND t.state = 'done' AND t.action = ? "
+        " ORDER BY t.dispatched_at DESC LIMIT ?",
+        (int(account_id), action, PUBLIC_LETTERS_SCANNED),
+    ):
+        try:
+            params = json.loads(str(row["params"] or "{}"))
+        except ValueError:
+            continue
+        if not isinstance(params, dict):
+            continue
+        text = str(params.get("text") or "")
+        if not outreach_texts.sector_of_first_touch(
+            str(row["username"] or ""), text
+        ):
+            continue
+        letters.append({
+            "kind": action,
+            "text": text,
+            "sent_at": str(row["dispatched_at"] or ""),
+        })
+        if len(letters) >= limit:
+            break
+    return letters
+
+
 def account_role_for(store: Store, inbound: dict) -> str:
     """Роль, которой позволено отвечать на поверхности этого входящего.
 
@@ -533,7 +626,26 @@ def build_context(
         if candidate:
             branch_context = branch.context_for_sector(candidate)
 
-    return {
+    # Человек отвечает на наше письмо МЕСТУ, а не нам лично. Тогда первого
+    # касания на его контакте нет и не будет: письмо ушло чату или каналу.
+    # Проверка выше про него ничего не знает, и без этой ветки движок получает
+    # разговор без начала.
+    letters: list[dict[str, str]] = []
+    if answered_our_public_touch(
+        store, inbound, thread
+    ) and not first_touch_of_its_own(store, thread):
+        letters = our_public_letters(store, int(inbound["account_id"]), role)
+
+    # Ветку теста по этим письмам НЕ открываем, хотя соблазн есть: сфера у всей
+    # полосы одна и подтверждена посимвольно. Но она описывает наше письмо, а не
+    # человека, и адресат письма не обязан быть из неё. @arikhina 03.08 ответила
+    # на письмо каналу «зачем нам сообщения людей, которым нужны запуски
+    # онлайн-школ» — письмо про авто ушло не в ту дверь. Открытая ветка звала бы
+    # её в чужую тестовую группу, а отзывается такой доступ только руками.
+    # Сферу по-прежнему называет сам человек, и совпадения с каталогом хватает
+    # для автовыдачи без всякой ветки.
+
+    context: dict[str, Any] = {
         "provider_id": PROVIDER_ID,
         "inbound_id": str(inbound["id"]),
         "account_id": str(inbound["account_id"]),
@@ -557,6 +669,18 @@ def build_context(
         "direct_invite_context": branch_context or {},
         "free_test_access_branch": branch_context or {"branch": "manager"},
     }
+    if letters:
+        # Режим ставим явно, а не отдаём на вывод движку: тот выводит его из
+        # роли и наличия исходящих в диалоге, а здесь исходящих нет как раз
+        # потому, что писали мы не человеку. Полосы получают разные правила —
+        # чат разворачивает крючок покупателя, канал продолжает своё же
+        # предложение.
+        context["entry_mode"] = (
+            CHAT_SENDER_PRIVATE_ENTRY_MODE if role == "chat_sender"
+            else CHANNEL_SENDER_PRIVATE_ENTRY_MODE
+        )
+        context["recent_public_chat_outreach"] = letters
+    return context
 
 
 def remember_discovery(store: Store, thread: dict, update: dict) -> None:

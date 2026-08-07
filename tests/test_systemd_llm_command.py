@@ -108,10 +108,6 @@ class AutoreplyUnitTests(unittest.TestCase):
         self.assertEqual(len(value.strip('"').split()), 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ВложенностьТаймаутов(unittest.TestCase):
     """Три предела на один вызов модели, и все три обязаны согласоваться.
 
@@ -155,3 +151,7 @@ class ВложенностьТаймаутов(unittest.TestCase):
                 self.assertGreater(
                     предел, маршрут,
                     "обёртку убьют раньше, чем маршрут доработает")
+
+
+if __name__ == "__main__":
+    unittest.main()
