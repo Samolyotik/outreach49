@@ -1820,7 +1820,8 @@ class ChatPostReplyGateTests(unittest.TestCase):
         self.store.close()
         self.tmp.cleanup()
 
-    def post_to_a_chat(self, state: str = "done") -> None:
+    def post_to_a_chat(self, state: str = "done",
+                       action: str = "send_public_chat_message") -> None:
         chat = entities.add_contact(self.store, username="somechat",
                                     segment="chats", actor="test")
         self.store.execute(
@@ -1830,16 +1831,16 @@ class ChatPostReplyGateTests(unittest.TestCase):
         self.store.execute(
             "INSERT INTO tasks(id, campaign_id, contact_id, account_id, action, "
             "params, mode, scheduled_at, state, created_at, updated_at) "
-            "VALUES('t1','topup',?,821,'send_public_chat_message','{}',"
+            "VALUES('t1','topup',?,821,?,'{}',"
             "'immediate',?,?,?,?)",
-            (chat["id"], now(), state, now(), now()))
+            (chat["id"], action, now(), state, now(), now()))
         self.store.commit()
 
     def inbound(self, text: str, surface: str = "private_dm") -> dict:
         return {"id": "1", "account_id": 821, "surface": surface, "text": text}
 
     def answers(self, text: str, surface: str = "private_dm") -> bool:
-        return autoreply.answered_our_chat_post(
+        return autoreply.answered_our_public_touch(
             self.store, self.inbound(text, surface), self.thread)
 
     def test_a_russian_reply_after_our_chat_post_is_ours(self):
@@ -1847,9 +1848,29 @@ class ChatPostReplyGateTests(unittest.TestCase):
         self.assertTrue(self.answers("Здравствуйте! Вас какой автомобиль "
                                      "интересует? Мы возим из Кореи"))
 
-    def test_without_a_chat_post_the_person_stays_a_stranger(self):
+    def test_without_a_public_touch_the_person_stays_a_stranger(self):
         self.assertFalse(self.answers("Здравствуйте! Вас какой автомобиль "
                                       "интересует?"))
+
+    def test_a_channel_letter_counts_too(self):
+        """Письмо в личку канала — тоже сообщение МЕСТУ, а не человеку.
+
+        07.08 владелец канала спросил «А какие условия? Платно делаете
+        только?» через полчаса после нашего письма в его канал и ушёл
+        менеджеру: аккаунт 851 объявлений в чатах не давал вовсе, только
+        письма каналам.
+        """
+        self.post_to_a_chat(action="send_channel_dm")
+        self.assertTrue(self.answers("А какие условия? Платно делаете только?"))
+
+    def test_a_private_send_does_not_open_the_door(self):
+        """Иначе аккаунт, раз написавший в личку, начнёт отвечать всем подряд.
+
+        Написав человеку напрямую, мы и так попадаем под обычную проверку по
+        контакту — здесь это засчитывать нечего.
+        """
+        self.post_to_a_chat(action="send_private_dm")
+        self.assertFalse(self.answers("Здравствуйте, а какие условия?"))
 
     def test_an_unsent_chat_post_does_not_count(self):
         """Запланированное объявление ещё никого не позвало."""
